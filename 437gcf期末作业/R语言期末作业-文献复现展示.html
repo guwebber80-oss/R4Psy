@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R语言期末作业 – 文献复现展示</title>
+<style>
+/* ========== 全局重置与基础 ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f5f3f0;
+  --chat-bg: #faf8f5;
+  --report-bg: #fdfdfc;
+  --text: #2c2c2c;
+  --text-light: #555;
+  --user-bubble: #fff3e0;
+  --user-bubble-border: #f5c882;
+  --ai-bubble: #eef2f7;
+  --ai-bubble-border: #b8c9e0;
+  --accent: #5b7eb5;
+  --accent-warm: #e8924a;
+  --toggle-bg: rgba(255,255,255,0.78);
+  --toggle-shadow: 0 2px 16px rgba(0,0,0,0.09);
+  --code-bg: #f0f0f0;
+  --chat-code-bg: #fff8f0;
+  --border-subtle: #e0dcd5;
+  --report-heading: #1a3a5c;
+  --report-code-bg: #f4f4f5;
+  --h2-color: #2c5f8a;
+  --h3-color: #3a6a96;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* 背景装饰 */
+body::before {
+  content: '';
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background-image: radial-gradient(circle at 15% 20%, rgba(91,126,181,0.04) 0%, transparent 50%),
+                    radial-gradient(circle at 85% 70%, rgba(232,146,74,0.04) 0%, transparent 50%);
+  pointer-events: none; z-index: 0;
+}
+
+/* ========== 顶部标题栏 ========== */
+.header-bar {
+  position: sticky; top: 0; z-index: 900;
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 16px 0;
+  text-align: center;
+}
+.header-bar h1 {
+  font-size: 1.35rem; font-weight: 700; color: #2c2c2c;
+  letter-spacing: 0.02em;
+  margin: 0 auto;
+  max-width: 860px;
+  padding: 0 20px;
+}
+.header-bar .accent-line {
+  display: block; width: 60px; height: 3px;
+  background: linear-gradient(90deg, var(--accent-warm), var(--accent));
+  margin: 8px auto 0; border-radius: 2px;
+}
+
+/* ========== 切换按钮 ========== */
+.toggle-wrapper {
+  position: fixed; top: 16px; left: 20px; z-index: 1000;
+  display: flex; align-items: center;
+}
+.toggle-capsule {
+  display: flex; align-items: center;
+  background: var(--toggle-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 28px;
+  box-shadow: var(--toggle-shadow);
+  border: 1px solid rgba(255,255,255,0.5);
+  overflow: hidden;
+  transition: all 0.3s;
+}
+.toggle-btn {
+  padding: 8px 18px;
+  font-size: 0.9rem; font-weight: 500;
+  cursor: pointer; border: none; background: transparent;
+  color: #888; white-space: nowrap;
+  transition: all 0.3s ease;
+  position: relative; outline: none;
+  font-family: inherit;
+}
+.toggle-btn:hover { color: #555; }
+.toggle-btn.active {
+  color: #fff; font-weight: 600;
+  background: linear-gradient(135deg, var(--accent), #4a6fa5);
+}
+.toggle-btn:first-child { border-radius: 28px 0 0 28px; }
+.toggle-btn:last-child { border-radius: 0 28px 28px 0; }
+.toggle-btn:first-child.active { border-radius: 28px; }
+.toggle-btn:last-child.active { border-radius: 28px; }
+.toggle-btn:not(.active):first-child { border-radius: 28px 0 0 28px; }
+.toggle-btn:not(.active):last-child { border-radius: 0 28px 28px 0; }
+
+/* 胶囊内仅一个按钮激活时的圆角 */
+.toggle-capsule:has(.toggle-btn.active:first-child) .toggle-btn:last-child:not(.active) {
+  border-radius: 0 28px 28px 0;
+}
+
+/* ========== 视图容器 ========== */
+.content-wrapper {
+  max-width: 860px; margin: 0 auto; padding: 30px 20px 60px;
+  position: relative; z-index: 1;
+}
+.view-container {
+  position: absolute; top: 0; left: 0; right: 0;
+  opacity: 0; transform: translateY(14px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  pointer-events: none;
+  padding: 0 20px;
+}
+.view-container.active {
+  opacity: 1; transform: translateY(0);
+  pointer-events: auto; position: relative;
+}
+
+/* ========== 视图一：聊天风格 ========== */
+.chat-view { background: transparent; }
+
+.chat-stage {
+  margin-bottom: 32px;
+}
+.chat-stage-header {
+  text-align: center; margin: 28px 0 18px;
+}
+.chat-stage-header h2 {
+  display: inline-block;
+  font-size: 1.1rem; font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), #6b8fc4);
+  padding: 6px 22px; border-radius: 20px;
+  letter-spacing: 0.03em;
+}
+.chat-stage-header h2.stage-fail {
+  background: linear-gradient(135deg, #c97a7a, #a85858);
+}
+.chat-stage-header h2.stage-success {
+  background: linear-gradient(135deg, #6aaf6a, #4a8a4a);
+}
+
+.chat-msg {
+  display: flex; margin-bottom: 14px;
+  animation: msgIn 0.4s ease both;
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.chat-msg.user { justify-content: flex-end; }
+.chat-msg.ai { justify-content: flex-start; }
+
+.chat-bubble {
+  max-width: 78%; padding: 12px 18px; border-radius: 18px;
+  font-size: 0.93rem; line-height: 1.65;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  position: relative;
+}
+.chat-msg.user .chat-bubble {
+  background: var(--user-bubble);
+  border: 1px solid var(--user-bubble-border);
+  border-bottom-right-radius: 6px;
+}
+.chat-msg.ai .chat-bubble {
+  background: var(--ai-bubble);
+  border: 1px solid var(--ai-bubble-border);
+  border-bottom-left-radius: 6px;
+}
+
+.chat-bubble .bubble-label {
+  font-size: 0.75rem; font-weight: 600; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 5px;
+}
+.chat-msg.user .bubble-label { color: var(--accent-warm); }
+.chat-msg.ai .bubble-label { color: var(--accent); }
+
+.chat-bubble .bubble-content p { margin-bottom: 8px; }
+.chat-bubble .bubble-content p:last-child { margin-bottom: 0; }
+.chat-bubble .bubble-content ul,
+.chat-bubble .bubble-content ol { margin: 6px 0 6px 18px; }
+.chat-bubble .bubble-content li { margin-bottom: 3px; }
+
+.chat-bubble .bubble-content blockquote {
+  border-left: 3px solid var(--accent-warm);
+  padding: 6px 0 6px 14px; margin: 8px 0;
+  color: #5a4a3a; font-style: italic; background: rgba(255,255,255,0.4);
+  border-radius: 0 4px 4px 0;
+}
+.chat-msg.ai .bubble-content blockquote {
+  border-left-color: var(--accent);
+}
+
+/* 聊天视图中的代码块 */
+.chat-bubble pre {
+  background: var(--chat-code-bg);
+  border: 1px solid #e8dcc8;
+  border-radius: 8px; padding: 10px 14px;
+  font-size: 0.82rem; overflow-x: auto;
+  margin: 8px 0; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  line-height: 1.5;
+}
+.chat-bubble code {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
+  background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 3px;
+}
+.chat-bubble pre code {
+  background: none; padding: 0; font-size: inherit; border-radius: 0;
+}
+
+.chat-bubble .result-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 10px;
+  font-size: 0.85rem; font-weight: 600; margin: 4px 0;
+}
+.chat-bubble .result-badge.success {
+  background: #e6f5e6; color: #2d7a2d;
+}
+.chat-bubble .result-badge.fail {
+  background: #fde8e8; color: #b23b3b;
+}
+
+.chat-stage-narrative {
+  text-align: center; margin: 10px 0 18px;
+  font-size: 0.9rem; color: #777; font-style: italic;
+}
+.chat-stage-narrative strong { color: #555; }
+
+/* 总结部分特殊样式 */
+.chat-summary {
+  background: linear-gradient(135deg, #fdf6ee, #f0eef8);
+  border: 1px solid #d8d0e0; border-radius: 16px;
+  padding: 20px 24px; margin-top: 24px;
+}
+.chat-summary h3 {
+  font-size: 1.1rem; color: var(--accent); margin-bottom: 12px;
+  text-align: center;
+}
+.chat-summary li { margin-bottom: 6px; color: #444; }
+
+/* ========== 视图二：学术报告风格 ========== */
+.report-view {
+  background: var(--report-bg);
+  border-radius: 6px;
+  padding: 40px 36px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  font-size: 0.95rem;
+  color: #2a2a2a;
+}
+
+.report-view h1 {
+  font-size: 1.6rem; font-weight: 700; color: var(--report-heading);
+  text-align: center; margin-bottom: 10px;
+  font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+}
+.report-view h2 {
+  font-size: 1.25rem; font-weight: 700; color: var(--h2-color);
+  margin: 32px 0 14px; padding-bottom: 6px;
+  border-bottom: 1.5px solid #d8dde5;
+  font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+}
+.report-view h3 {
+  font-size: 1.08rem; font-weight: 700; color: var(--h3-color);
+  margin: 24px 0 10px;
+}
+.report-view h4 {
+  font-size: 1rem; font-weight: 600; color: #3d5a80;
+  margin: 18px 0 8px;
+}
+
+.report-view p { margin-bottom: 12px; line-height: 1.75; }
+.report-view strong { color: #1a1a1a; }
+.report-view em { color: #444; }
+
+.report-view ul, .report-view ol {
+  margin: 8px 0 14px 22px;
+}
+.report-view li { margin-bottom: 5px; line-height: 1.7; }
+
+.report-view blockquote {
+  border-left: 3px solid #b0bec5; padding: 8px 16px;
+  margin: 14px 0; color: #555; background: #f9fafb;
+  border-radius: 0 4px 4px 0; font-style: italic;
+}
+
+.report-view table {
+  width: 100%; border-collapse: collapse; margin: 16px 0;
+  font-size: 0.88rem;
+}
+.report-view thead th {
+  background: #f0f3f7; padding: 8px 10px;
+  border-bottom: 2px solid #c5cdd8; text-align: center;
+  font-weight: 600; color: #2c3e50;
+}
+.report-view tbody td {
+  padding: 7px 10px; border-bottom: 1px solid #e8ecf1;
+  text-align: center;
+}
+.report-view tbody tr:nth-child(even) { background: #fafbfc; }
+.report-view tbody tr:hover { background: #f0f4f8; }
+
+.report-view pre {
+  background: var(--report-code-bg);
+  border: 1px solid #e0e4e8; border-radius: 6px;
+  padding: 14px 18px; margin: 12px 0;
+  overflow-x: auto; font-size: 0.84rem;
+  line-height: 1.55;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+.report-view code {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.88em; background: #f0f0f0; padding: 1px 5px;
+  border-radius: 3px;
+}
+.report-view pre code {
+  background: none; padding: 0; font-size: inherit; border-radius: 0;
+}
+
+.report-view hr {
+  border: none; border-top: 1px solid #dde; margin: 24px 0;
+}
+
+.report-view .meta-info {
+  text-align: center; color: #777; font-size: 0.88rem;
+  margin-bottom: 28px; line-height: 1.8;
+}
+.report-view .meta-info strong { color: #555; }
+
+.report-view .chart-placeholder {
+  border: 2px dashed #c5cdd8; border-radius: 8px;
+  padding: 32px; text-align: center; color: #999;
+  margin: 16px 0; background: #fafbfc;
+  font-size: 0.9rem;
+}
+
+/* 响应式 */
+@media (max-width: 700px) {
+  .toggle-wrapper { top: 10px; left: 10px; }
+  .toggle-btn { padding: 6px 12px; font-size: 0.8rem; }
+  .header-bar h1 { font-size: 1.1rem; }
+  .content-wrapper { padding: 20px 10px 40px; }
+  .view-container { padding: 0 10px; }
+  .report-view { padding: 24px 16px; }
+  .chat-bubble { max-width: 90%; }
+  .report-view table { font-size: 0.78rem; }
+  .report-view thead th, .report-view tbody td { padding: 5px 6px; }
+}
+</style>
+</head>
+<body>
+
+<!-- 标题栏 -->
+<div class="header-bar">
+  <h1>R语言期末作业 – 文献复现展示<span class="accent-line"></span></h1>
+</div>
+
+<!-- 切换按钮 -->
+<div class="toggle-wrapper">
+  <div class="toggle-capsule">
+    <button class="toggle-btn active" data-view="chat" id="btn-chat">💬 复现流程</button>
+    <button class="toggle-btn" data-view="report" id="btn-report">📄 复现报告</button>
+  </div>
+</div>
+
+<!-- 内容区域 -->
+<div class="content-wrapper">
+
+  <!-- ====== 视图一：复现流程（聊天风格） ====== -->
+  <div class="view-container active" id="view-chat">
+
+    <div class="chat-stage">
+      <div class="chat-stage-narrative">
+        <strong>📋 项目背景：</strong>基于 Ohtsubo 等 (2014) 公开数据集，在 R 环境下复现"人际注意力与亲密感"研究。以下记录了与 AI 协作完成文献复现的完整过程。
+      </div>
+    </div>
+
+    <!-- 阶段一 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-fail">❌ 阶段一：一步到位，失败</h2></div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">📋 对话背景</div>
+          <div class="bubble-content">
+            <p>刚读完原文献和获取数据，想直接让 AI 一次生成全套分析脚本。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>用 R 4.5.2 分析 Excel 数据 <code>1-s2.0-...-mmc1.xlsx</code>，依据 <code>437gcf第二次小作业.md</code> 细化复现方案，考虑可行性。注意事项：</p>
+              <ul>
+                <li>Study2 的亲密感量表有 1 道反向题，需先反向计分再算总分。</li>
+                <li>缺失值直接删除被试，不用插补。</li>
+                <li>Bootstrap 抽样 5000 次，稳健 ANOVA 修剪比例 20%。</li>
+                <li>混合效应模型结果可能与原文不同，属方法学改进，需在报告中说明。</li>
+                <li>Study2b 交友兴趣边缘显著，Bootstrap 可能改变显著性，如实报告。</li>
+              </ul>
+              <p>给我写 R 脚本，按清洗步骤分块，每块前加简短中文注释。同时生成一份解释复现流程的报告。</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🔧 后续对话</div>
+          <div class="bubble-content">
+            <p>试运行报错，我又把报错信息扔给 AI 让它检查。最后让它生成一份对话总结文档。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge fail">❌ 失败</span> AI 胡乱编程，生成的 task_summary 中文乱码。项目文件夹 <code>v1,纯ai</code> 废弃。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-stage-narrative">
+        <strong>💡 教训：</strong>一次性要求过多会导致 AI 输出混乱、乱码
+      </div>
+    </div>
+
+    <!-- 阶段二 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-success">✅ 阶段二：拆分实验，分头击破</h2></div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🎯 调整策略</div>
+          <div class="bubble-content">
+            <p>把整个复现拆成 1a、1b、2a+2b、2c 四个子实验，分别开新对话请求 AI，避免上下文过载。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 对话1 -->
+      <div class="chat-stage-header"><h2 style="font-size:0.95rem; padding:4px 16px;">💬 对话 1：实验 1a</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>用 R 4.5.2（路径 <code>D:\R-4.5.2\bin\x64\R.exe</code>）分析实验 1a。</p>
+              <ul>
+                <li>读取 Excel 的 sheet "Study_1a"，前两行分别是情景、分类，用来标注被试，之后删去。</li>
+                <li>清洗：删掉含缺失的被试，尤其注意 sex 列的 NA。</li>
+                <li>先算 Cronbach α，再拟合混合线性模型：<code>intimacy ~ attention * benefit * time * sex * scenario + Order + (1 | ID)</code>，Order 不可忽略。</li>
+                <li>汇报效应量，诊断模型，ggplot2 作图。</li>
+                <li>写完后用文字重点讲解线性模型拟合过程。</li>
+              </ul>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span> 生成可用脚本。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 对话2 -->
+      <div class="chat-stage-header"><h2 style="font-size:0.95rem; padding:4px 16px;">💬 对话 2：实验 1b</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>与 1a 类似，改读 sheet "Study_1b"。模型变为：<code>intimacy ~ attention * benefit * scenario + Order + (1 | ID)</code>。其他要求（清洗、信度、效应量、诊断、作图、讲解）不变。</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 对话3 -->
+      <div class="chat-stage-header"><h2 style="font-size:0.95rem; padding:4px 16px;">💬 对话 3：实验 2a 与 2b</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>分析实验 2a、2b。读取 sheet "Study_2a" 和 "Study_2b"，第一行是分类，标注后删除。</p>
+              <ul>
+                <li>attention 是自变量；因变量 care、accept、understand、friend 均为 7 点量表；care2 需反向计分（8 - care2），四个因变量合成亲密程度。</li>
+                <li>分别计算两个实验所有题项的 Cronbach α。</li>
+                <li>用 Bootstrap（5000次）对两实验的各自 attention 分组做 t 检验，检验各因变量及亲密总分，汇报效应量。</li>
+                <li>文字讲解 bootstrap 过程。</li>
+              </ul>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 对话4 -->
+      <div class="chat-stage-header"><h2 style="font-size:0.95rem; padding:4px 16px;">💬 对话 4：实验 2c</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>分析实验 2c，读 sheet "Study_2c"，首行即列名。</p>
+              <ul>
+                <li>变量：attention（3水平）、care、care2、accept、understand、friend1/2、Est.attention、Actual.attention。</li>
+                <li>预处理：care2 反向计分；计算 intimacy 和 friendship 的信度；Z 分数标记异常值（|Z|>3）。</li>
+                <li>描述统计：分组报告 M、SD、中位数、IQR、n，箱线图。</li>
+                <li>主分析：(1) Welch ANOVA + Games-Howell，报告效应量 Cohen's f；(2) 贝叶斯 ANOVA（10000次迭代），报告 BF₁₀、η² 可信区间、后验概率。</li>
+                <li>稳健性分析：去异常值后重做上述两种分析；稳健贝叶斯 ANOVA（t 残差）。</li>
+                <li>剂量反应：Actual.attention 连续变量，稳健回归 + Spearman 相关。</li>
+                <li>操纵检查：贝叶斯相关、贝叶斯配对 t 检验、贝叶斯 ANOVA。</li>
+                <li>全部结果 APA 7 格式，表、图 300dpi，保存文件。详细文字讲解，比较原文结果。</li>
+              </ul>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span> 但发现 ggplot2 绘图有缺陷，后续单独处理绘图时手动删除。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-stage-narrative">
+        <strong>📦 阶段成果：</strong>各子实验脚本均存于 <code>v2,人为引导\分段code</code>。
+      </div>
+    </div>
+
+    <!-- 阶段三 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-success">✅ 阶段三：脚本整合</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>把 <code>D:\Rana.final\code</code> 中 1a、1b、2a、2b、2c 的脚本整合为一个主程序。处理包冲突，结果存 <code>D:\Rana.final\finalscript</code>，中间脚本存 <code>D:\Rana.final\guocheng</code>，别动原 code 文件。</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span> 整合完成，形成完整复现代码 <code>v2,人为引导\最终复现代码</code>。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 阶段四 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-success">✅ 阶段四：用原文方法精确复现</h2></div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">📋 准备</div>
+          <div class="bubble-content">
+            <p>豆包辅助生成了原文分析步骤文档 <code>original.md</code>。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI 说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>严格按照 <code>D:\Rana.final\original.md</code> 的方法分析同一份数据，看能否复现原文统计量。</p>
+              <p>代码要求：函数&lt;30行、分层、模块化、注释写"为什么"、公共函数有文档、提前返回、嵌套不超3层、无注释掉的代码。</p>
+              <p>输出仿 SPSS 三线表，整合为 markdown 报告存 <code>Rana.final</code>。中间脚本存 <code>oriprocess</code>，最终脚本存 <code>oricode</code>。R 4.5.2。</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span> 顺利生成复现程序与复现报告，存于 <code>v2,人为引导\oricode</code> 和 <code>复现报告\reproduction_report.md</code>。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 阶段五 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-fail">❌ 阶段五：图表定制</h2></div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🔧 过程</div>
+          <div class="bubble-content">
+            <p>在整合后的代码基础上多次与 AI 对话修改 ggplot2 图形。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge fail">❌ 失败</span> 多轮后仍存在误差棒与数据重合、网格显示、Y轴零刻度不对齐等问题，最终放弃，转由人工调整。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-stage-narrative">
+        <strong>💡 教训：</strong>作图失败很大程度是因为在一个长对话中反复修改整体脚本，消耗 token 且 AI 降智。新对话+专注单一任务效果更好。
+      </div>
+    </div>
+
+    <!-- 阶段六 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2 class="stage-success">✅ 阶段六：生成总复现报告</h2></div>
+
+      <div class="chat-msg user">
+        <div class="chat-bubble">
+          <div class="bubble-label">🧑 我对 AI（豆包）说</div>
+          <div class="bubble-content">
+            <blockquote>
+              <p>写一份复现报告：包括原文实验设计简述、证据链、复现方法（原文方法+新统计方法）、结果差异比较。把关键统计代码插入合适位置。</p>
+              <p>格式：markdown，统计量除希腊字母外斜体，逻辑符号前后空格，正确显示上下标（适配 Obsidian）。</p>
+              <p>输入：原文献 PDF、原文方法复现结果、其他新方法结果、各程序源码。</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">🤖 结果</div>
+          <div class="bubble-content">
+            <p><span class="result-badge success">✅ 成功</span> 生成 <code>人际注意力与亲密感关系研究复现报告.md</code>。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 我的总结 -->
+    <div class="chat-stage">
+      <div class="chat-stage-header"><h2>📝 我的总结</h2></div>
+
+      <div class="chat-msg ai">
+        <div class="chat-bubble">
+          <div class="bubble-label">💡 经验与反思</div>
+          <div class="bubble-content">
+            <div class="chat-summary">
+              <ul>
+                <li><strong>分阶段对话至关重要：</strong>一次性要求过多会导致 AI 输出混乱、乱码；拆分后每个子实验成功率高。</li>
+                <li><strong>上下文管理：</strong>作图失败很大程度是因为在一个长对话中反复修改整体脚本，消耗 token 且 AI 降智。新对话+专注单一任务效果更好。</li>
+                <li><strong>编码问题：</strong>网页端 AI 中文正常，但本地脚本因 Windows GBK 默认编码致乱码，需强制 UTF-8。</li>
+                <li><strong>对于统计和编程薄弱者：</strong>AI 代码仍是黑箱，应对方法是要求 AI 分块、加详细注释，像"少儿编程"一样理解逻辑。</li>
+                <li><strong>AI 对路径和过程概念理解有限：</strong>不能清晰区分"中间脚本""最终脚本"文件夹，需反复强调。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ====== 视图二：复现报告（学术风格） ====== -->
+  <div class="view-container" id="view-report">
+
+    <div class="report-view">
+
+      <h1>文献复现报告</h1>
+
+      <div class="meta-info">
+        <p><strong>复现对象：</strong>Ohtsubo 等 (2014)《It's the attention that counts: interpersonal attention fosters intimacy and social exchange》</p>
+        <p><strong>数据来源：</strong>原论文公开数据集 <code>1-s2.0-S1090513814000245-mmc1.xlsx</code></p>
+        <p><strong>复现环境：</strong>R 4.5.2 + 核心包 <code>lme4</code> / <code>lavaan</code> / <code>BayesFactor</code></p>
+        <p><strong>复现方法：</strong>① 严格遵循原文统计流程的验证性复现；② 采用现代统计方法的探索性复现</p>
+        <p><strong>报告日期：</strong>2026 年 6 月 11 日</p>
+      </div>
+
+      <h2>摘要</h2>
+      <p>本文对 Ohtsubo 等 (2014) 提出的"人际注意力作为长期伙伴关系承诺线索"理论进行了验证性与探索性复现。利用原论文公开数据集，在 R 环境下严格复现了原研究的方差分析、中介效应检验及 <em>t</em> 检验，并进一步采用线性混合效应模型、Bootstrap 稳健推断、贝叶斯 ANOVA 及链式中介模型进行探索性分析。验证性复现结果显示，超过 90% 的关键统计量与原文完全或高度一致，注意力对亲密感的促进作用独立于物质获益，且亲密感完全中介了注意力对社会交换意愿的影响。探索性复现支持了上述核心结论的稳健性，但研究 2c 的注意力剂量–反应关系在异方差稳健检验及贝叶斯分析中不再显著，提示原结论可能受小样本与量表低信度影响。本研究证实了该理论框架的可重复性，同时建议对剂量效应结论持谨慎态度。</p>
+
+      <hr>
+
+      <h2>一、原文实验设计概述</h2>
+      <p>本研究旨在解决进化心理学领域的 "友谊悖论"——人类友谊关系中的合作行为表现出比标准一报还一报 (TFT) 策略更高的慷慨度。研究者提出<strong>人际注意力是个体区分长期忠诚伙伴与机会主义伙伴的核心评估线索</strong>的核心假设。通过 5 项递进式实验，研究系统分离了 "注意力投入" 与 "实际物质获益" 的混淆效应，验证了人际注意力对亲密感形成的独立因果作用。</p>
+
+      <h3>1.1 研究 1：情境实验（分离注意力与即时获益）</h3>
+      <ul>
+        <li><strong>研究 1a</strong>（<em>N</em> = 309）：采用 2 (注意力：存在 / 缺失) × 2 (获益：存在 / 缺失) × 2 (时间投入：长 / 短) × 3 (场景顺序) 被试间因子设计
+          <ul>
+            <li>实验场景：构建建议寻求、生日惊喜、学业支持三种日常社会支持情境</li>
+            <li>变量操纵：注意力通过 "对方是否主动感知并关注你的状态" 操纵；获益通过 "对方的帮助是否有效解决问题" 操纵</li>
+            <li>因变量：亲密感（包含理解、接纳、关心三个维度）、对伴侣未来帮助的预期、帮助伴侣的意愿</li>
+          </ul>
+        </li>
+        <li><strong>研究 1b</strong>（<em>N</em> = 105）：剔除研究 1a 中无显著效应的 "时间投入" 变量，对核心结果进行独立样本重复验证</li>
+      </ul>
+
+      <h3>1.2 研究 2：实验室实验（完全分离注意力与任何潜在获益）</h3>
+      <p>采用计算机模拟双人合作任务范式，被试被随机分配为 "玩家 2" 角色，搭档（实为计算机程序）为 "玩家 1" 角色。核心操纵为：<strong>搭档可实时监控被试的答题进度（注意力操作），但实验规则明确禁止搭档提供任何形式的帮助（无获益可能）</strong>，监控状态通过屏幕信号灯颜色变化向被试呈现。</p>
+      <ul>
+        <li><strong>研究 2a</strong>（<em>N</em> = 29）：比较 "80% 时间被监控" 与 "0% 时间被监控" 两组被试的亲密感差异</li>
+        <li><strong>研究 2b</strong>（<em>N</em> = 44）：针对研究 2a 对照组可能存在的负向偏差问题，设置 "系统随机信号灯" 作为中性控制条件（信号出现频率同为 80%，但非搭档主动控制）</li>
+        <li><strong>研究 2c</strong>（<em>N</em> = 36）：检验注意力的剂量–反应关系，设置低 (20%)、中 (50%)、高 (80%) 三个注意力频率水平组</li>
+      </ul>
+
+      <h2>二、原文证据链与核心结论</h2>
+
+      <h3>2.1 原文证据链</h3>
+      <ol>
+        <li><strong>理论基础</strong>：传统互惠利他理论无法解释友谊关系的非条件性特征；生物市场理论指出，个体需要可靠线索评估伴侣的长期关系承诺意愿</li>
+        <li><strong>核心假设</strong>：注意力作为有限认知资源，其分配比例直接反映个体对关系的主观价值评估，因此可作为承诺的可信信号</li>
+        <li><strong>递进式验证逻辑</strong>：
+          <ul>
+            <li>研究 1 证明：注意力对亲密感的影响<strong>独立于即时物质获益</strong>，且效应量显著大于获益的效应</li>
+            <li>中介分析表明：亲密感<strong>完全中介</strong>了注意力对 "帮助预期" 和 "帮助意愿" 的影响</li>
+            <li>研究 2a–2b 证明：<strong>纯粹的主动注意力投入</strong>（无任何物质获益可能）即可显著提升亲密感</li>
+            <li>研究 2c 表明：亲密感与注意力频率之间存在<strong>正相关剂量–反应关系</strong></li>
+          </ul>
+        </li>
+      </ol>
+
+      <h3>2.2 原文核心结论</h3>
+      <ol>
+        <li>人际注意力是促进亲密感形成的核心因素，其作用不依赖于是否带来实际物质利益</li>
+        <li>亲密感是连接注意力投入与后续社会交换行为的近端心理机制</li>
+        <li>友谊进化理论模型必须纳入 "关系价值信息交换" 维度，而非仅关注物质成本与收益的交换</li>
+      </ol>
+
+      <h2>三、复现方法与原文方法的差异</h2>
+
+      <table>
+        <thead>
+          <tr><th>分析维度</th><th>原文方法</th><th>验证性复现方法</th><th>探索性复现方法（现代改进）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>方差分析</td><td>SPSS Type III 平方和，聚合数据分析</td><td>R Type II 平方和（与 Type III 数值接近），设定相对误差 &lt; 2% 为复现成功标准</td><td>线性混合效应模型 (LMM)，纳入被试水平随机截距以控制被试内非独立性</td></tr>
+          <tr><td>中介效应</td><td>Sobel 检验</td><td>完全重复原文 Sobel 检验流程</td><td>基于结构方程模型的多重链式中介分析，采用聚类稳健标准误</td></tr>
+          <tr><td>组间比较</td><td>独立样本 <em>t</em> 检验（假设方差齐性）</td><td>完全重复原文独立样本 <em>t</em> 检验</td><td>Welch <em>t</em> 检验 + 5000 次 Bootstrap 抽样，报告 Cohen's <em>d</em> 及其 95% 置信区间</td></tr>
+          <tr><td>剂量效应</td><td>单因素 ANOVA + Tukey HSD 事后检验</td><td>完全重复原文分析流程</td><td>Welch ANOVA（异方差稳健）+ 贝叶斯 ANOVA + M 估计稳健回归</td></tr>
+          <tr><td>信度分析</td><td>Cronbach's α（整体量表）</td><td>完全重复原文分析</td><td>分场景信度分析 + 量表信度 95% 置信区间估计</td></tr>
+          <tr><td>模型诊断</td><td>未报告</td><td>未报告</td><td>Shapiro-Wilk 残差正态性检验 + Levene 方差齐性检验</td></tr>
+        </tbody>
+      </table>
+
+      <h2>四、关键复现代码详解</h2>
+
+      <h3>4.1 分析初始化与基础配置</h3>
+      <p>本部分完成数据分析的环境准备工作，确保分析过程可重复、结果可验证。</p>
+
+<pre><code># 加载依赖包：每个包提供特定统计分析功能，按依赖顺序加载以避免冲突
+library(readxl)      # 读取Excel格式原始数据
+library(psych)       # 心理测量学分析（量表信度、描述统计等）
+library(dplyr)       # 数据清洗与转换（tidyverse生态核心包）
+library(tidyr)       # 数据格式重塑（宽-长格式转换）
+library(lme4)        # 线性混合效应模型拟合
+library(lmerTest)    # 为混合效应模型提供基于Satterthwaite自由度的p值计算
+library(lavaan)      # 结构方程模型与中介效应分析
+library(BayesFactor) # 贝叶斯统计推断
+library(performance) # 模型拟合度评估与诊断
+set.seed(2024)       # 设定全局随机种子，保证所有随机过程结果完全可重复
+
+# 自定义函数：自动生成符合学术规范的Markdown三线表
+md_table <- function(df, digits = 3) {
+  nc <- ncol(df)
+  cn <- colnames(df)
+  cat("|", paste(cn, collapse = " | "), "|\n")
+  cat("|", paste(rep("---", nc), collapse = " | "), "|\n")
+  for (r in seq_len(nrow(df))) {
+    vals <- sapply(seq_len(nc), function(j) {
+      v <- df[r, j]
+      if (is.numeric(v)) sprintf(paste0("%.", digits, "f"), v)
+      else as.character(v)
+    })
+    cat("|", paste(vals, collapse = " | "), "|\n")
+  }
+  cat("\n")
+}</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li><code>#</code> 标识注释行：仅用于代码说明，不被 R 解释器执行</li>
+        <li>代码执行顺序：严格从上至下逐行执行</li>
+        <li>随机种子的重要性：统计分析中的 Bootstrap 抽样、贝叶斯 MCMC 采样等过程依赖随机数生成，设定固定种子可确保不同研究者、不同时间运行相同代码得到完全一致的结果</li>
+      </ul>
+
+      <h3>4.2 研究 1a：数据预处理与混合效应模型分析</h3>
+
+      <h4>4.2.1 数据预处理</h4>
+      <p>原始数据通常存在格式不规范、变量类型错误、缺失值等问题，预处理是保证分析结果有效性的前提。</p>
+
+<pre><code># 读取原始Excel文件中的"Study 1a"工作表
+raw <- read_excel(DATA_FILE, sheet = "Study 1a", col_names = FALSE)
+
+# 数据格式标准化：原始数据前两行包含表头信息，需单独处理
+d_1a <- raw[-(1:2), ]       # 删除前两行非数据行
+names(d_1a) <- as.character(raw[2, ]) # 将第二行内容设置为数据框列名
+
+# 变量类型转换：将分类变量转换为R识别的因子类型
+d_1a <- d_1a %>% mutate(
+  ID = as.factor(ID),         # 被试唯一标识（分类变量）
+  Order = as.factor(Order),   # 实验场景呈现顺序（分类变量）
+  attention = as.factor(attention), # 核心自变量：注意力条件
+  benefit = as.factor(benefit),     # 核心自变量：获益条件
+  time = as.factor(time)            # 控制变量：时间投入条件
+)
+
+# 缺失值处理：删除关键变量存在缺失的被试数据
+d_1a <- d_1a[complete.cases(d_1a[, c("ID","Order","attention","time","benefit")]), ]
+
+# 数据格式重塑：将宽格式数据转换为混合模型所需的长格式
+dl_1a <- bind_rows(
+  d_1a %>% select(ID,Order,attention,time,benefit,
+                 intimacy11,intimacy12,intimacy13,Exp.Help1,Will.Help1) %>%
+    rename(int1=intimacy11,int2=intimacy12,int3=intimacy13,
+           exp_help=Exp.Help1,will_help=Will.Help1) %>%
+    mutate(scenario="Advice"),
+  d_1a %>% select(ID,Order,attention,time,benefit,
+                 intimacy21,intimacy22,intimacy23,Exp.Help2,Will.Help2) %>%
+    rename(int1=intimacy21,int2=intimacy22,int3=intimacy23,
+           exp_help=Exp.Help2,will_help=Will.Help2) %>%
+    mutate(scenario="Surprise"),
+  d_1a %>% select(ID,Order,attention,time,benefit,
+                 intimacy31,intimacy32,intimacy33,Exp.Help3,Will.Help3) %>%
+    rename(int1=intimacy31,int2=intimacy32,int3=intimacy33,
+           exp_help=Exp.Help3,will_help=Will.Help3) %>%
+    mutate(scenario="Moral_Support")
+) %>% mutate(
+  intimacy = (int1 + int2 + int3) / 3  # 计算每个场景的亲密感得分
+)</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li>因子类型：R 中用于表示分类变量的数据类型，确保统计分析将其作为类别而非连续数值处理</li>
+        <li>宽格式与长格式：宽格式便于人工阅读，长格式符合大多数统计模型的输入要求</li>
+        <li>管道符 <code>%>%</code>：将前一个函数的输出作为后一个函数的输入，提高代码可读性</li>
+      </ul>
+
+      <h4>4.2.2 线性混合效应模型拟合</h4>
+      <p>传统方差分析要求所有观测相互独立，但本研究中同一被试完成了 3 个场景的任务，其多次观测存在非独立性。混合效应模型通过引入随机效应项，有效解决了这一问题。</p>
+
+<pre><code># 拟合线性混合效应模型
+m_intimacy_1a <- lmer(
+  intimacy ~ attention * benefit * scenario + time + Order +
+    (1 | ID),          # 随机效应：允许截距随被试ID变化
+  data = dl_1a,
+  REML = FALSE         # 使用ML估计，便于模型比较
+)
+
+anova(m_intimacy_1a, type = "III")  # Type III平方和
+
+# 计算模型解释力：Nakagawa & Schielzeth (2013) R²
+r2_nakagawa(m_intimacy_1a)
+# R²m：边际R²，仅由固定效应解释的方差比例
+# R²c：条件R²，由固定效应和随机效应共同解释的方差比例</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li>固定效应：研究者感兴趣的、系统的实验操纵效应（如注意力、获益的影响）</li>
+        <li>随机效应：由抽样产生的、非系统性的变异（如不同被试之间的个体差异）</li>
+        <li>Type III 平方和：在不平衡设计中，每个效应的检验控制了其他所有效应的影响</li>
+      </ul>
+
+      <h4>4.2.3 链式中介效应分析</h4>
+      <p>中介分析旨在揭示自变量对因变量产生影响的内在机制。链式中介模型用于检验包含多个连续中介变量的复杂传导路径。</p>
+
+<pre><code># 定义链式中介模型（lavaan语法）
+model5 <- "
+  intimacy ~ a5*att_num + b1 + t1 + male + sc_surprise + sc_moral + ord2 + ord3
+  will_help ~ d51*intimacy + a52*att_num + b1 + t1 + male + sc_surprise + sc_moral + ord2 + ord3
+  exp_help ~ d52*will_help + d53*intimacy + c5*att_num + b1 + t1 + male + sc_surprise + sc_moral + ord2 + ord3
+
+  # 定义特定间接效应
+  ind_att_int_will := a5*d51          # 注意力→亲密感→帮助意愿
+  ind_att_int_exp := a5*d53           # 注意力→亲密感→帮助预期
+  ind_att_will_exp := a52*d52         # 注意力→帮助意愿→帮助预期
+  ind_serial := a5*d51*d52            # 链式间接效应
+  total_ind := ind_att_int_will + ind_att_int_exp + ind_att_will_exp + ind_serial
+  total := c5 + total_ind
+"
+
+fit5 <- sem(model5, data = dl_1a_med, cluster = "ID")
+parameterEstimates(fit5)</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li>中介效应：自变量通过一个或多个中间变量对因变量产生的间接影响</li>
+        <li>完全中介：自变量对因变量的直接效应不显著，所有影响均通过中介变量传递</li>
+        <li>聚类稳健标准误：当数据存在聚类结构时，修正标准误估计偏差</li>
+      </ul>
+
+      <h3>4.3 研究 2a–2b：Bootstrap 稳健 <em>t</em> 检验</h3>
+      <p>研究 2 为两组被试间设计，采用 <em>t</em> 检验比较组间差异。传统 <em>t</em> 检验依赖正态性和方差齐性假设，在小样本情况下可能产生偏差。Bootstrap 方法通过有放回的重复抽样构建经验抽样分布，无需依赖分布假设，具有更稳健的统计性质。</p>
+
+<pre><code># 自定义Bootstrap t检验函数
+bootstrap_t_test <- function(data, dv_name, R = 5000) {
+  g1 <- data[[dv_name]][data$attention == "a1"] # 注意力组
+  g0 <- data[[dv_name]][data$attention == "a0"] # 对照组
+
+  ott <- t.test(g1, g0, var.equal = FALSE)   # Welch t检验
+  ot <- as.numeric(ott$statistic)             # 观测t值
+  omd <- mean(g1) - mean(g0)                  # 观测组间均值差
+
+  dr <- effectsize::cohens_d(g1, g0)         # Cohen's d效应量
+  od <- as.numeric(dr$Cohens_d)
+  dcl <- as.numeric(dr$CI_low)
+  dch <- as.numeric(dr$CI_high)
+
+  # Bootstrap置换检验
+  dc <- data
+  grand_mean <- mean(data[[dv_name]])
+  dc[[dv_name]][data$attention == "a1"] <- g1 - mean(g1) + grand_mean
+  dc[[dv_name]][data$attention == "a0"] <- g0 - mean(g0) + grand_mean
+
+  btn <- function(data, indices) {
+    d <- data[indices, ]
+    g1_boot <- d[[dv_name]][d$attention == "a1"]
+    g0_boot <- d[[dv_name]][d$attention == "a0"]
+    if (length(g1_boot) < 2 || length(g0_boot) < 2) return(NA)
+    as.numeric(t.test(g1_boot, g0_boot, var.equal = FALSE)$statistic)
+  }
+
+  set.seed(2024)
+  btr <- boot::boot(dc, btn, R = R)
+  btv <- btr$t[!is.na(btr$t)]
+  pb <- mean(abs(btv) >= abs(ot))           # Bootstrap p值
+
+  return(data.frame(
+    DV = dv_name, N_a1 = length(g1), N_a0 = length(g0),
+    Mean_a1 = mean(g1), Mean_a0 = mean(g0), MeanDiff = omd,
+    t = ot, df = as.numeric(ott$parameter), Welch_p = ott$p.value,
+    Boot_p = pb, Cohens_d = od, d_CI_low = dcl, d_CI_high = dch
+  ))
+}</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li>效应量：量化变量之间关系强度的指标，不受样本量影响。Cohen's <em>d</em> 的常用标准为：<em>d</em> = 0.2（小效应）、<em>d</em> = 0.5（中等效应）、<em>d</em> = 0.8（大效应）</li>
+        <li>置换检验：一种非参数统计方法，通过随机置换数据来生成零假设分布，无需假设数据服从特定分布</li>
+      </ul>
+
+      <h3>4.4 研究 2c：贝叶斯 ANOVA 与剂量–反应分析</h3>
+      <p>研究 2c 为三组被试间设计，原文采用普通单因素 ANOVA，但存在样本量小、方差不齐、量表信度低等问题。贝叶斯方法直接量化不同假设的证据强度，提供更稳健的推断。</p>
+
+<pre><code># 1. 贝叶斯方差分析
+set.seed(2024)
+bf_full <- anovaBF(intimacy ~ attention, data = df_2c, iterations = 10000)
+bf10_val <- as.numeric(extractBF(bf_full)["bf"])
+
+# BF₁₀解读标准（Jeffreys, 1961）：
+# BF₁₀ > 10：强证据支持H1
+# 3 < BF₁₀ < 10：中等证据支持H1
+# 1/3 < BF₁₀ < 3：证据不足，无法判断
+# BF₁₀ < 1/3：中等证据支持H0
+# BF₁₀ < 1/10：强证据支持H0
+
+# 2. 稳健回归：检验注意力与亲密感的剂量-反应关系
+df_2c$att_prob <- dplyr::case_when(
+  df_2c$attention == "Low(20%)"  ~ 0.2,
+  df_2c$attention == "Mid(50%)"  ~ 0.5,
+  df_2c$attention == "High(80%)" ~ 0.8
+)
+
+# M估计稳健回归：对异常值和非正态分布具有鲁棒性
+rob_fit <- MASS::rlm(intimacy ~ att_prob, data = df_2c)
+coef_b <- coef(rob_fit)["att_prob"]
+se_b <- sqrt(diag(vcov(rob_fit)))["att_prob"]
+t_b <- coef_b / se_b
+p_b <- 2 * pt(abs(t_b), df = nrow(df_2c) - 2, lower.tail = FALSE)</code></pre>
+
+      <p><strong>核心概念说明：</strong></p>
+      <ul>
+        <li>贝叶斯因子：贝叶斯假设检验的核心指标，直接回答 "数据支持哪个假设" 的问题</li>
+        <li>稳健回归：采用 M 估计方法，通过降低异常值的权重来减少其对回归结果的影响</li>
+      </ul>
+
+      <h2>五、复现结果对比</h2>
+
+      <h3>5.1 验证性复现结果（与原文方法一致）</h3>
+      <p><strong>核心结论：90% 以上的关键统计结果得到完全复现</strong></p>
+
+      <ol>
+        <li><strong>研究 1a</strong>：
+          <ul>
+            <li>注意力主效应：<em>F</em>(1, 285) = 34.80, <em>p</em> &lt; .001, <em>η</em>² = 0.109（原文 <em>F</em> = 35.36，相对误差 1.6%）</li>
+            <li>获益主效应：<em>F</em>(1, 285) = 6.21, <em>p</em> = .013, <em>η</em>² = 0.021（原文 <em>F</em> = 5.96，相对误差 4.2%）</li>
+            <li>中介效应：Sobel <em>z</em> = 5.34（帮助预期）、5.32（帮助意愿），与原文完全一致</li>
+          </ul>
+        </li>
+        <li><strong>研究 1b</strong>：
+          <ul>
+            <li>注意力主效应：<em>F</em>(1, 81) = 46.33, <em>p</em> &lt; .001, <em>η</em>² = 0.364（原文 <em>F</em> = 45.76，相对误差 1.2%）</li>
+            <li>获益主效应：<em>F</em>(1, 81) = 7.40, <em>p</em> = .008, <em>η</em>² = 0.084（原文 <em>F</em> = 6.60，相对误差 12.1%，仍保持统计显著性）</li>
+          </ul>
+        </li>
+        <li><strong>研究 2a–2b</strong>：所有 <em>t</em> 值、<em>p</em> 值、Cohen's <em>d</em> 与原文完全一致（相对误差 &lt; 1%）</li>
+        <li><strong>研究 2c</strong>：
+          <ul>
+            <li>单因素 ANOVA：<em>F</em>(2, 33) = 3.97, <em>p</em> = .028, <em>η</em>² = 0.194（与原文完全一致）</li>
+            <li>Tukey HSD 事后检验：高注意力组显著高于低注意力组 (<em>p</em> = .048)，边际显著高于中注意力组 (<em>p</em> = .055)</li>
+            <li>操纵检查：实际与估计注意力频率的相关系数 <em>r</em> = .85, <em>p</em> &lt; .001（与原文完全一致）</li>
+          </ul>
+        </li>
+      </ol>
+
+      <table>
+        <thead>
+          <tr><th>研究 &amp; 对比项</th><th>样本量 <em>N</em></th><th>统计量 (<em>t</em> / <em>F</em>)</th><th>效应量 (<em>η</em>² / Cohen's <em>d</em>)</th><th>显著性指标 (<em>p</em>)</th><th>其它指标</th></tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="6"><strong>Study 1a</strong></td></tr>
+          <tr><td>原文献报告结果</td><td>309</td><td>35.36</td><td>0.099</td><td>&lt; .001</td><td><em>df</em>₁ = 1, <em>df</em>₂ = 285</td></tr>
+          <tr><td>本研究</td><td>309</td><td>34.80</td><td>0.109</td><td>&lt; .001</td><td><em>df</em>₁ = 1, <em>df</em>₂ = 285</td></tr>
+          <tr><td>δ（百分误差 PE）</td><td>-</td><td>1.58%</td><td>10.10%</td><td>0%（推论一致）</td><td>0%</td></tr>
+          <tr><td>评级</td><td>完全一致</td><td>次要偏差</td><td>主要偏差</td><td>完全一致</td><td>完全一致</td></tr>
+          <tr><td colspan="6"><strong>Study 1b</strong></td></tr>
+          <tr><td>原文献报告结果</td><td>105</td><td>45.76</td><td>0.319</td><td>&lt; .001</td><td><em>df</em>₁ = 1, <em>df</em>₂ = 81</td></tr>
+          <tr><td>本研究</td><td>105</td><td>46.33</td><td>0.364</td><td>&lt; .001</td><td><em>df</em>₁ = 1, <em>df</em>₂ = 81</td></tr>
+          <tr><td>δ（百分误差 PE）</td><td>-</td><td>1.25%</td><td>14.11%</td><td>0%（推论一致）</td><td>0%</td></tr>
+          <tr><td>评级</td><td>完全一致</td><td>次要偏差</td><td>主要偏差</td><td>完全一致</td><td>完全一致</td></tr>
+          <tr><td colspan="6"><strong>Study 2a</strong></td></tr>
+          <tr><td>原文献报告结果</td><td>29</td><td>5.91</td><td>2.20</td><td>&lt; .001</td><td><em>df</em> = 27</td></tr>
+          <tr><td>本研究</td><td>29</td><td>5.91</td><td>2.20</td><td>&lt; .001</td><td><em>df</em> = 27</td></tr>
+          <tr><td>δ（百分误差 PE）</td><td>-</td><td>0%</td><td>0%</td><td>0%（推论一致）</td><td>0%</td></tr>
+          <tr><td>评级</td><td>完全一致</td><td>完全一致</td><td>完全一致</td><td>完全一致</td><td>完全一致</td></tr>
+          <tr><td colspan="6"><strong>Study 2b</strong></td></tr>
+          <tr><td>原文献报告结果</td><td>44</td><td>4.10</td><td>1.27</td><td>&lt; .001</td><td><em>df</em> = 42</td></tr>
+          <tr><td>本研究</td><td>44</td><td>4.10</td><td>1.24</td><td>&lt; .001</td><td><em>df</em> = 42</td></tr>
+          <tr><td>δ（百分误差 PE）</td><td>-</td><td>0%</td><td>2.36%</td><td>0%（推论一致）</td><td>0%</td></tr>
+          <tr><td>评级</td><td>完全一致</td><td>完全一致</td><td>次要偏差</td><td>完全一致</td><td>完全一致</td></tr>
+          <tr><td colspan="6"><strong>Study 2c</strong></td></tr>
+          <tr><td>原文献报告结果</td><td>36</td><td>3.97</td><td>0.194</td><td>.028</td><td><em>df</em>₁ = 2, <em>df</em>₂ = 33</td></tr>
+          <tr><td>本研究</td><td>36</td><td>3.97</td><td>0.194</td><td>.028</td><td><em>df</em>₁ = 2, <em>df</em>₂ = 33</td></tr>
+          <tr><td>δ（百分误差 PE）</td><td>-</td><td>0%</td><td>0%</td><td>0%（推论一致）</td><td>0%</td></tr>
+          <tr><td>评级</td><td>完全一致</td><td>完全一致</td><td>完全一致</td><td>完全一致</td><td>完全一致</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 探索性复现结果（与原文结果的差异）</h3>
+
+      <h4>研究 1：混合效应模型分析</h4>
+      <ul>
+        <li><strong>方法优势</strong>：通过引入被试水平随机截距，有效控制了同一被试多次观测的非独立性，提高了统计检验力</li>
+        <li><strong>结果变化</strong>：
+          <ul>
+            <li>研究 1a 注意力效应增强：<em>F</em><sub>(1, 301.3)</sub> = 37.98, <em>p</em> &lt; .001（原文 <em>F</em> = 35.36）</li>
+            <li>研究 1a 获益效应减弱：<em>F</em><sub>(1, 293.0)</sub> = 5.11, <em>p</em> = .025（原文 <em>p</em> = .015）</li>
+            <li>研究 1b 注意力效应显著增强：<em>F</em><sub>(1, 104)</sub> = 52.32, <em>p</em> &lt; .001（原文 <em>F</em> = 45.76）</li>
+            <li>所有交互效应均不显著，与原文结论一致</li>
+          </ul>
+        </li>
+        <li><strong>中介分析扩展</strong>：链式中介模型表明，"注意力→亲密感→帮助预期→帮助意愿" 和 "注意力→亲密感→帮助意愿→帮助预期" 两条链式路径均显著，总间接效应占总效应的 99% 以上</li>
+      </ul>
+
+      <h4>研究 2：稳健性分析</h4>
+      <ul>
+        <li><strong>研究 2a–2b</strong>：Bootstrap <em>t</em> 检验结果与原文完全一致，但提供了更精确的效应量置信区间
+          <ul>
+            <li>研究 2a 亲密感组间差异：<em>d</em> = 1.07, 95% CI [0.28, 1.84]</li>
+            <li>研究 2b 亲密感组间差异：<em>d</em> = 0.87, 95% CI [0.25, 1.49]</li>
+          </ul>
+        </li>
+        <li><strong>研究 2c：实质性差异</strong>
+          <ul>
+            <li>原文结论：存在显著的注意力剂量效应 (<em>F</em> = 3.97, <em>p</em> = .028)</li>
+            <li>现代统计分析结果：
+              <ul>
+                <li>Welch ANOVA：<em>F</em><sub>(2.00, 21.69)</sub> = 0.72, <em>p</em> = .496（无统计显著性）</li>
+                <li>贝叶斯 ANOVA：<em>BF</em>₁₀ = 0.29（中等强度证据支持零假设）</li>
+                <li>稳健回归：<em>b</em> = 0.60, <em>p</em> = .243（无显著剂量–反应关系）</li>
+              </ul>
+            </li>
+            <li><strong>差异原因分析</strong>：
+              <ol>
+                <li>量表信度严重不足：亲密感量表 Cronbach's α = .359，远低于 .7 的可接受标准</li>
+                <li>样本量过小：每组仅 12 名被试，统计检验力不足</li>
+                <li>方差不齐：中注意力组标准差 (0.96) 显著大于低 (0.72) 和高 (0.72) 注意力组，违反普通 ANOVA 的方差齐性假设</li>
+              </ol>
+            </li>
+          </ul>
+        </li>
+      </ul>
+
+      <table>
+        <thead>
+          <tr><th>研究</th><th>核心效应假设</th><th>创新分析方法</th><th>统计量</th><th>效应量</th><th>显著性指标</th><th>与原文推论一致性</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>研究 1a</strong></td><td>注意力主效应（亲密感）</td><td>线性混合效应模型（LMM，纳入被试随机截距）</td><td><em>F</em><sub>(1, 301.3)</sub> = 37.98</td><td>-</td><td><em>p</em> &lt; .001</td><td>一致</td></tr>
+          <tr><td></td><td>获益主效应（亲密感）</td><td>线性混合效应模型</td><td><em>F</em><sub>(1, 293.0)</sub> = 5.11</td><td>-</td><td><em>p</em> = .025</td><td>一致</td></tr>
+          <tr><td></td><td>注意力对社会交换的传导机制</td><td>聚类稳健标准误链式中介模型</td><td>-</td><td>总间接效应占总效应 99% 以上</td><td>所有间接路径均显著</td><td>一致</td></tr>
+          <tr><td><strong>研究 1b</strong></td><td>注意力主效应（亲密感）</td><td>线性混合效应模型</td><td><em>F</em><sub>(1, 104)</sub> = 52.32</td><td>-</td><td><em>p</em> &lt; .001</td><td>一致</td></tr>
+          <tr><td><strong>研究 2a</strong></td><td>注意力组亲密感显著高于对照组</td><td>Welch <em>t</em> 检验 + 5000 次 Bootstrap 抽样</td><td><em>t</em> = 5.91</td><td>Cohen's <em>d</em> = 1.07, 95% CI [0.28, 1.84]</td><td>Bootstrap <em>p</em> &lt; .001</td><td>一致</td></tr>
+          <tr><td><strong>研究 2b</strong></td><td>有意注意组亲密感显著高于无意注意组</td><td>Welch <em>t</em> 检验 + 5000 次 Bootstrap 抽样</td><td><em>t</em> = 4.10</td><td>Cohen's <em>d</em> = 0.87, 95% CI [0.25, 1.49]</td><td>Bootstrap <em>p</em> &lt; .001</td><td>一致</td></tr>
+          <tr><td><strong>研究 2c</strong></td><td>注意力剂量主效应（亲密感）</td><td>Welch ANOVA（异方差稳健）</td><td><em>F</em><sub>(2.00, 21.69)</sub> = 0.72</td><td>-</td><td><em>p</em> = .496</td><td>不一致</td></tr>
+          <tr><td></td><td></td><td>贝叶斯 ANOVA</td><td><em>BF</em>₁₀ = 0.29</td><td>-</td><td>中等强度证据支持零假设</td><td>不一致</td></tr>
+          <tr><td></td><td></td><td>M 估计稳健回归</td><td><em>b</em> = 0.60</td><td>-</td><td><em>p</em> = .243</td><td>不一致</td></tr>
+          <tr><td></td><td>操纵检查：注意力频率感知准确性</td><td>Pearson 相关分析</td><td><em>r</em> = .85</td><td>-</td><td><em>p</em> &lt; .001</td><td>一致</td></tr>
+        </tbody>
+      </table>
+
+      <h2>六、结论差异与讨论</h2>
+
+      <h3>6.1 得到稳健支持的原文结论</h3>
+      <ol>
+        <li>✅ 人际注意力对亲密感的影响<strong>独立于即时物质获益</strong>，且其效应量显著大于获益的效应</li>
+        <li>✅ 亲密感<strong>完全中介</strong>了注意力投入对后续社会交换意愿的影响</li>
+        <li>✅ 纯粹的主动注意力投入（无任何物质获益可能）即可显著提升人际亲密感</li>
+        <li>✅ 个体能够准确感知他人的注意力分配频率</li>
+      </ol>
+
+      <h3>6.2 存在争议的原文结论</h3>
+      <ol>
+        <li>❌ <strong>注意力剂量效应未得到稳健支持</strong>：研究 2c 的结果在采用异方差稳健方法和贝叶斯分析后完全不显著，且量表信度问题严重削弱了其结论的内部效度</li>
+        <li>⚠️ 获益对亲密感的影响被原文高估：混合效应模型分析显示，获益的效应量更小、显著性更低，进一步支持了注意力在亲密感形成中的主导作用</li>
+      </ol>
+
+      <h3>6.3 复现研究的启示</h3>
+      <ol>
+        <li>原研究的核心结论具有很强的统计稳健性，即使采用更严格的现代统计方法仍得到一致支持</li>
+        <li>研究 2c 的剂量效应结论需要谨慎对待，未来研究需采用更大样本量和更可靠的测量工具进行验证</li>
+        <li>对于重复测量设计，混合效应模型优于传统聚合数据的方差分析，能够提供更准确的效应量估计和更可靠的统计推断</li>
+      </ol>
+
+      <h2>七、研究局限性</h2>
+      <ol>
+        <li>所有被试均为日本在校大学生，样本同质性较高，研究结果的文化普适性有待检验</li>
+        <li>研究 2 采用陌生人短暂互动范式，与真实长期友谊关系的形成过程存在差异</li>
+        <li>所有因变量均采用自我报告法测量，缺乏客观行为指标的验证</li>
+      </ol>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  const btnChat = document.getElementById('btn-chat');
+  const btnReport = document.getElementById('btn-report');
+  const viewChat = document.getElementById('view-chat');
+  const viewReport = document.getElementById('view-report');
+
+  function switchView(viewName) {
+    const isChat = viewName === 'chat';
+
+    // 更新按钮状态
+    btnChat.classList.toggle('active', isChat);
+    btnReport.classList.toggle('active', !isChat);
+
+    // 更新视图
+    viewChat.classList.toggle('active', isChat);
+    viewReport.classList.toggle('active', !isChat);
+
+    // 滚动到顶部
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  btnChat.addEventListener('click', function() { switchView('chat'); });
+  btnReport.addEventListener('click', function() { switchView('report'); });
+
+  // 键盘快捷键：Ctrl+1 / Ctrl+2 切换视图
+  document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === '1') { e.preventDefault(); switchView('chat'); }
+    if (e.ctrlKey && e.key === '2') { e.preventDefault(); switchView('report'); }
+  });
+})();
+</script>
+
+</body>
+</html>

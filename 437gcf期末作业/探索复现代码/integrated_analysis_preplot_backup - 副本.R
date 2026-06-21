@@ -1,0 +1,596 @@
+###############################################################################
+#  整合复现脚本 (v2) — 含三线表输出与清洗数据导出
+#  论文: Lim & DeSteno (2014) - Attention as a Cue for Social Exchange
+#  数据: 1-s2.0-S1090513814000245-mmc1.xlsx
+#  实验: 1a, 1b, 2a, 2b, 2c
+###############################################################################
+
+Sys.setlocale("LC_ALL", "Chinese")
+
+# ==== 包加载（按顺序加载以避免冲突） ====
+library(readxl)
+library(psych)
+library(MASS)
+library(boot)
+library(dplyr)
+library(tidyr)
+
+library(effectsize)
+library(emmeans)
+library(rstatix)
+library(lme4)
+library(lmerTest)
+library(lavaan)
+library(BayesFactor)
+library(writexl)
+library(performance)
+
+set.seed(2024)
+
+DATA_FILE  <- "D:/Rana.final/1-s2.0-S1090513814000245-mmc1.xlsx"
+OUT_DIR    <- "D:/Rana.final/output"
+CLEAN_DIR  <- "D:/Rana.final/cleanedata"
+dir.create(OUT_DIR,   showWarnings = FALSE, recursive = TRUE)
+dir.create(CLEAN_DIR, showWarnings = FALSE, recursive = TRUE)
+
+# ===========================================================================
+#  辅助函数: Markdown 三线表（仿 SPSS 风格）
+# ===========================================================================
+md_header <- function(title, level = 2) {
+  cat(strrep("#", level), " ", title, "\n\n", sep = "")
+}
+
+md_table <- function(df, digits = 3) {
+  nc <- ncol(df)
+  cn <- colnames(df)
+  # 表头行
+  cat("|", paste(cn, collapse = " | "), "|\n")
+  # 分隔行
+  cat("|", paste(rep("---", nc), collapse = " | "), "|\n")
+  # 数据行
+  for (r in seq_len(nrow(df))) {
+    vals <- sapply(seq_len(nc), function(j) {
+      v <- df[r, j]
+      if (is.numeric(v)) sprintf(paste0("%.", digits, "f"), v)
+      else as.character(v)
+    })
+    cat("|", paste(vals, collapse = " | "), "|\n")
+  }
+  cat("\n")
+}
+
+cat("\n========================================\n")
+cat("  INTEGRATED ANALYSIS v2 STARTING\n")
+cat("  Output: ", OUT_DIR, "\n")
+cat("  Clean:  ", CLEAN_DIR, "\n")
+cat("========================================\n")
+
+
+###############################################################################
+#                            实验 1a 分析                                      #
+###############################################################################
+cat("\n", strrep("=", 70), "\n  STUDY 1a\n", strrep("=", 70), "\n")
+dir.create(file.path(OUT_DIR, "1a"), showWarnings = FALSE, recursive = TRUE)
+OUT1a <- file.path(OUT_DIR, "1a")
+
+# --- 1a.1 读取与清洗数据 ---
+cat("  Reading & cleaning...\n")
+raw <- read_excel(DATA_FILE, sheet = "Study 1a", col_names = FALSE)
+d_1a <- raw[-(1:2), ]; names(d_1a) <- as.character(raw[2, ])
+d_1a <- d_1a %>% mutate(ID = as.factor(ID), Order = as.factor(Order), age = as.numeric(age))
+req <- c("ID","Order","attention","time","benefit","age","sex")
+d_1a[d_1a == "NA"] <- NA
+d_1a <- d_1a[complete.cases(d_1a[, req]), ]
+num_cols_1 <- c("intimacy11","intimacy12","intimacy13","intimacy21","intimacy22","intimacy23",
+  "intimacy31","intimacy32","intimacy33","Exp.Help1","Will.Help1","Exp.Help2","Will.Help2","Exp.Help3","Will.Help3")
+d_1a <- d_1a %>% mutate(across(all_of(num_cols_1), as.numeric))
+na_out <- apply(d_1a[,num_cols_1], 1, function(r) any(is.na(r)))
+d_1a <- d_1a[!na_out, ]
+d_1a <- d_1a %>% mutate(sex = as.factor(sex), attention = as.factor(attention),
+  benefit = as.factor(benefit), time = as.factor(time))
+# --- 1a.2 保存清洗后数据 ---
+write_xlsx(as.data.frame(d_1a), file.path(CLEAN_DIR, "1a_cleaned.xlsx"))
+cat("  Cleaned data saved.\n")
+
+# --- 1a.3 转换为长格式 ---
+l1 <- d_1a %>% select(ID,Order,attention,time,benefit,age,sex,
+  intimacy11,intimacy12,intimacy13,Exp.Help1,Will.Help1) %>%
+  rename(int1=intimacy11,int2=intimacy12,int3=intimacy13,exp_help=Exp.Help1,will_help=Will.Help1) %>%
+  mutate(scenario="Advice")
+l2 <- d_1a %>% select(ID,Order,attention,time,benefit,age,sex,
+  intimacy21,intimacy22,intimacy23,Exp.Help2,Will.Help2) %>%
+  rename(int1=intimacy21,int2=intimacy22,int3=intimacy23,exp_help=Exp.Help2,will_help=Will.Help2) %>%
+  mutate(scenario="Surprise")
+l3 <- d_1a %>% select(ID,Order,attention,time,benefit,age,sex,
+  intimacy31,intimacy32,intimacy33,Exp.Help3,Will.Help3) %>%
+  rename(int1=intimacy31,int2=intimacy32,int3=intimacy33,exp_help=Exp.Help3,will_help=Will.Help3) %>%
+  mutate(scenario="Moral_Support")
+dl_1a <- bind_rows(l1,l2,l3)
+dl_1a <- dl_1a %>% mutate(intimacy=(int1+int2+int3)/3,
+  scenario=factor(scenario,levels=c("Advice","Surprise","Moral_Support")))
+
+# --- 1a.4 克隆巴赫α信度 ---
+alpha_1a <- data.frame()
+for(sc in c("Advice","Surprise","Moral_Support")){
+  if(sc=="Advice") items <- d_1a[,c("intimacy11","intimacy12","intimacy13")]
+  else if(sc=="Surprise") items <- d_1a[,c("intimacy21","intimacy22","intimacy23")]
+  else items <- d_1a[,c("intimacy31","intimacy32","intimacy33")]
+  a <- psych::alpha(items); ase <- ifelse(is.null(a$total$ase),0,a$total$ase)
+  alpha_1a <- rbind(alpha_1a, data.frame(
+    Scenario=sc, Items="3", Alpha=a$total$raw_alpha,
+    CI_lower=a$total$raw_alpha-1.96*ase, CI_upper=a$total$raw_alpha+1.96*ase, stringsAsFactors=FALSE))
+}
+a_all <- psych::alpha(d_1a[,c("intimacy11","intimacy12","intimacy13","intimacy21","intimacy22","intimacy23","intimacy31","intimacy32","intimacy33")])
+alpha_1a <- rbind(alpha_1a, data.frame(Scenario="Overall",Items="9",Alpha=a_all$total$raw_alpha,CI_lower=NA,CI_upper=NA,stringsAsFactors=FALSE))
+
+# --- 1a.5 混合线性模型 ---
+m_intimacy_1a <- lmer(intimacy~attention*benefit*scenario+time+Order+(1|ID),data=dl_1a,REML=FALSE)
+m_exphelp_1a  <- lmer(exp_help~attention*benefit*scenario+time+Order+(1|ID),data=dl_1a,REML=FALSE)
+m_willhelp_1a <- lmer(will_help~attention*benefit*scenario+time+Order+(1|ID),data=dl_1a,REML=FALSE)
+
+# --- 1a.6 标准化回归系数（效应量） ---
+std_beta_1a <- rbind(
+  cbind(DV="intimacy", as.data.frame(standardize_parameters(m_intimacy_1a))),
+  cbind(DV="exp_help", as.data.frame(standardize_parameters(m_exphelp_1a))),
+  cbind(DV="will_help", as.data.frame(standardize_parameters(m_willhelp_1a))))
+# 仅保留固定效应（排除截距项以简化表格）
+std_beta_1a <- std_beta_1a[std_beta_1a$Parameter != "(Intercept)", ]
+std_beta_1a <- std_beta_1a[, c("DV","Parameter","Std_Coefficient","CI_low","CI_high")]
+names(std_beta_1a) <- c("DV","Parameter","Std_Beta","CI_low","CI_high")
+
+
+make_anova_table <- function(m) {
+  a <- anova(m, type="III")
+  df <- data.frame(Term=rownames(a), NumDF=a[,"NumDF"], DenDF=a[,"DenDF"],
+    `F`=a[,"F value"], p=a[,6], stringsAsFactors=FALSE, check.names=FALSE)
+  # 注：eta2p 不适用于线性混合模型，已移除
+
+  df
+}
+
+# --- 1a.7 导出 Markdown 三线表 ---
+sink(file.path(OUT1a, "1a_results.md"))
+md_header("Study 1a - Results")
+
+md_header("Sample",3)
+cat(sprintf("- Valid subjects: %d\n- Long-format obs: %d\n\n", nrow(d_1a), nrow(dl_1a)))
+
+md_header("Cronbach Alpha (Intimacy)",3)
+md_table(alpha_1a, 3)
+
+md_header("Mixed Model: intimacy",3)
+cat("Formula: intimacy ~ attention * benefit * scenario + time + Order + (1|ID)\n\n")
+md_table(make_anova_table(m_intimacy_1a))
+
+md_header("Mixed Model: exp_help",3)
+md_table(make_anova_table(m_exphelp_1a))
+
+md_header("Mixed Model: will_help",3)
+md_table(make_anova_table(m_willhelp_1a))
+
+md_header("Model Fit",3)
+fit_tab <- data.frame(DV=c("intimacy","exp_help","will_help"),
+  AIC=c(AIC(m_intimacy_1a),AIC(m_exphelp_1a),AIC(m_willhelp_1a)),
+  BIC=c(BIC(m_intimacy_1a),BIC(m_exphelp_1a),BIC(m_willhelp_1a)),
+  R2m=c(r2_nakagawa(m_intimacy_1a)$R2_marginal,r2_nakagawa(m_exphelp_1a)$R2_marginal,r2_nakagawa(m_willhelp_1a)$R2_marginal),
+  R2c=c(r2_nakagawa(m_intimacy_1a)$R2_conditional,r2_nakagawa(m_exphelp_1a)$R2_conditional,r2_nakagawa(m_willhelp_1a)$R2_conditional),
+  stringsAsFactors=FALSE)
+md_table(fit_tab)
+
+md_header("Standardized Coefficients (Std. Beta)",3)
+md_table(std_beta_1a, 3)
+
+# --- 1a.8 模型诊断摘要 ---
+md_header("Diagnostics",3)
+sw <- shapiro.test(sample(resid(m_intimacy_1a), min(5000, length(resid(m_intimacy_1a)))))
+cat(sprintf("- Shapiro-Wilk (intimacy residuals): W=%.3f, p=%.4f\n", sw$statistic, sw$p.value))
+lv <- car::leveneTest(intimacy ~ scenario * attention * benefit, data = dl_1a)
+cat(sprintf("- Levene test: F(%d,%d)=%.3f, p=%.4f\n", lv[1,"Df"], lv[2,"Df"], lv[1,"F value"], lv[1,"Pr(>F)"]))
+sink()
+cat("  Markdown output saved.\n")
+
+cat(">>> Study 1a COMPLETE <<<\n")
+
+
+###############################################################################
+#                           实验 1a 中介分析                                   #
+###############################################################################
+# >>> 开始: 实验 1a 中介分析                                   #
+
+raw <- read_excel(DATA_FILE, sheet = "Study 1a", col_names = FALSE)
+d_1a_med <- raw[-(1:2), ]; names(d_1a_med) <- as.character(raw[2, ])
+d_1a_med <- d_1a_med %>% mutate(ID = as.factor(ID), Order = as.factor(Order), age = as.numeric(age))
+req <- c("ID","Order","attention","time","benefit","age","sex")
+d_1a_med[d_1a_med == "NA"] <- NA
+d_1a_med <- d_1a_med[complete.cases(d_1a_med[, req]), ]
+d_1a_med <- d_1a_med %>% mutate(across(all_of(num_cols_1), as.numeric))
+na_out <- apply(d_1a_med[,num_cols_1], 1, function(r) any(is.na(r)))
+d_1a_med <- d_1a_med[!na_out, ]
+
+l1m <- d_1a_med %>% dplyr::select(ID,Order,attention,time,benefit,age,sex,intimacy11,intimacy12,intimacy13,Exp.Help1,Will.Help1) %>%
+  rename(int1=intimacy11,int2=intimacy12,int3=intimacy13,exp_help=Exp.Help1,will_help=Will.Help1) %>% mutate(scenario="Advice")
+l2m <- d_1a_med %>% dplyr::select(ID,Order,attention,time,benefit,age,sex,intimacy21,intimacy22,intimacy23,Exp.Help2,Will.Help2) %>%
+  rename(int1=intimacy21,int2=intimacy22,int3=intimacy23,exp_help=Exp.Help2,will_help=Will.Help2) %>% mutate(scenario="Surprise")
+l3m <- d_1a_med %>% dplyr::select(ID,Order,attention,time,benefit,age,sex,intimacy31,intimacy32,intimacy33,Exp.Help3,Will.Help3) %>%
+  rename(int1=intimacy31,int2=intimacy32,int3=intimacy33,exp_help=Exp.Help3,will_help=Will.Help3) %>% mutate(scenario="Moral_Support")
+dl_1a_med <- bind_rows(l1m,l2m,l3m)
+dl_1a_med <- dl_1a_med %>% mutate(intimacy=(int1+int2+int3)/3,scenario=factor(scenario,levels=c("Advice","Surprise","Moral_Support")))
+
+dl_1a_med$att_num<-ifelse(dl_1a_med$attention=="a1",1,0);dl_1a_med$b1<-ifelse(dl_1a_med$benefit=="b1",1,0)
+dl_1a_med$t1<-ifelse(dl_1a_med$time=="t1",1,0);dl_1a_med$male<-ifelse(dl_1a_med$sex=="m",1,0)
+dl_1a_med$sc_surprise<-ifelse(dl_1a_med$scenario=="Surprise",1,0);dl_1a_med$sc_moral<-ifelse(dl_1a_med$scenario=="Moral_Support",1,0)
+dl_1a_med$ord2<-ifelse(dl_1a_med$Order=="2",1,0);dl_1a_med$ord3<-ifelse(dl_1a_med$Order=="3",1,0)
+
+cov_1a <- " + b1 + t1 + male + sc_surprise + sc_moral + ord2 + ord3"
+
+# 辅助函数: 提取自定义参数（间接效应与总效应）
+get_med_table <- function(fit, model_name) {
+  pe <- parameterEstimates(fit)
+  df <- pe[pe$op == ":=", c("lhs","est","se","z","pvalue")]
+  names(df) <- c("Parameter","Estimate","SE","z","p")
+  df$Model <- model_name
+  df
+}
+
+model1 <- paste(paste0("intimacy~a1*att_num",cov_1a),paste0("exp_help~b1*intimacy+c1*att_num",cov_1a),"indirect1:=a1*b1","total1:=c1+(a1*b1)",sep="\n")
+model2 <- paste(paste0("intimacy~a2*att_num",cov_1a),paste0("will_help~b2*intimacy+c2*att_num",cov_1a),"indirect2:=a2*b2","total2:=c2+(a2*b2)",sep="\n")
+model3 <- paste(paste0("exp_help~a3*att_num",cov_1a),paste0("will_help~b3*exp_help+c3*att_num",cov_1a),"indirect3:=a3*b3","total3:=c3+(a3*b3)",sep="\n")
+model4 <- paste(paste0("will_help~a4*att_num",cov_1a),paste0("exp_help~b4*will_help+c4*att_num",cov_1a),"indirect4:=a4*b4","total4:=c4+(a4*b4)",sep="\n")
+model5 <- paste(paste0("intimacy~a5*att_num",cov_1a),paste0("will_help~d51*intimacy+a52*att_num",cov_1a),paste0("exp_help~d52*will_help+d53*intimacy+c5*att_num",cov_1a),"ind_att_int_will:=a5*d51","ind_att_int_exp:=a5*d53","ind_att_will_exp:=a52*d52","ind_serial:=a5*d51*d52","total_ind:=(a5*d51)+(a5*d53)+(a52*d52)+(a5*d51*d52)","total:=c5+total_ind",sep="\n")
+model6 <- paste(paste0("intimacy~a6*att_num",cov_1a),paste0("exp_help~d61*intimacy+a62*att_num",cov_1a),paste0("will_help~d62*exp_help+d63*intimacy+c6*att_num",cov_1a),"ind_att_int_exp:=a6*d61","ind_att_int_will:=a6*d63","ind_att_exp_will:=a62*d62","ind_serial:=a6*d61*d62","total_ind:=(a6*d61)+(a6*d63)+(a62*d62)+(a6*d61*d62)","total:=c6+total_ind",sep="\n")
+
+fit1 <- sem(model1,data=dl_1a_med,cluster="ID"); fit2 <- sem(model2,data=dl_1a_med,cluster="ID")
+fit3 <- sem(model3,data=dl_1a_med,cluster="ID"); fit4 <- sem(model4,data=dl_1a_med,cluster="ID")
+fit5 <- sem(model5,data=dl_1a_med,cluster="ID"); fit6 <- sem(model6,data=dl_1a_med,cluster="ID")
+
+med_all <- rbind(
+  get_med_table(fit1,"M1: att->int->exp"), get_med_table(fit2,"M2: att->int->will"),
+  get_med_table(fit3,"M3: att->exp->will"), get_med_table(fit4,"M4: att->will->exp"),
+  get_med_table(fit5,"M5: att->int->will->exp"), get_med_table(fit6,"M6: att->int->exp->will"))
+
+sink(file.path(OUT1a, "1a_mediation.md"))
+md_header("Study 1a - Mediation Analysis")
+md_header("Indirect & Total Effects",3)
+cat(sprintf("N obs: %d\n\n", nrow(dl_1a_med)))
+md_table(med_all, 4)
+sink()
+cat(">>> Study 1a Mediation COMPLETE <<<\n")
+
+###############################################################################
+#                            实验 1b 分析                                      #
+###############################################################################
+cat("\n", strrep("=", 70), "\n  STUDY 1b\n", strrep("=", 70), "\n")
+dir.create(file.path(OUT_DIR, "1b"), showWarnings = FALSE, recursive = TRUE)
+OUT1b <- file.path(OUT_DIR, "1b")
+
+raw <- read_excel(DATA_FILE, sheet = "Study 1b", col_names = FALSE)
+d_1b <- raw[-(1:2), ]; names(d_1b) <- as.character(raw[2, ])
+d_1b <- d_1b %>% mutate(ID = as.factor(id), Order = as.factor(Order), age = as.numeric(age))
+d_1b$sex[d_1b$sex == "NA" & !is.na(d_1b$sex)] <- NA
+req_1b <- c("ID","Order","attention","benefit","age","sex")
+d_1b[d_1b == "NA"] <- NA
+d_1b <- d_1b[complete.cases(d_1b[, req_1b]), ]
+d_1b <- d_1b %>% mutate(across(all_of(num_cols_1), as.numeric))
+na_out <- apply(d_1b[,num_cols_1], 1, function(r) any(is.na(r)))
+d_1b <- d_1b[!na_out, ]
+d_1b <- d_1b %>% mutate(sex = as.factor(sex), attention = as.factor(attention), benefit = as.factor(benefit))
+# 保存清洗后数据
+write_xlsx(as.data.frame(d_1b), file.path(CLEAN_DIR, "1b_cleaned.xlsx"))
+
+l1b <- d_1b %>% select(ID,Order,attention,benefit,age,sex,intimacy11,intimacy12,intimacy13,Exp.Help1,Will.Help1) %>%
+  rename(int1=intimacy11,int2=intimacy12,int3=intimacy13,exp_help=Exp.Help1,will_help=Will.Help1) %>% mutate(scenario="Advice")
+l2b <- d_1b %>% select(ID,Order,attention,benefit,age,sex,intimacy21,intimacy22,intimacy23,Exp.Help2,Will.Help2) %>%
+  rename(int1=intimacy21,int2=intimacy22,int3=intimacy23,exp_help=Exp.Help2,will_help=Will.Help2) %>% mutate(scenario="Surprise")
+l3b <- d_1b %>% select(ID,Order,attention,benefit,age,sex,intimacy31,intimacy32,intimacy33,Exp.Help3,Will.Help3) %>%
+  rename(int1=intimacy31,int2=intimacy32,int3=intimacy33,exp_help=Exp.Help3,will_help=Will.Help3) %>% mutate(scenario="Moral_Support")
+dl_1b <- bind_rows(l1b,l2b,l3b)
+dl_1b <- dl_1b %>% mutate(intimacy=(int1+int2+int3)/3,scenario=factor(scenario,levels=c("Advice","Surprise","Moral_Support")))
+
+# 克隆巴赫α信度
+alpha_1b <- data.frame()
+for(sc in c("Advice","Surprise","Moral_Support")){
+  if(sc=="Advice") items <- d_1b[,c("intimacy11","intimacy12","intimacy13")]
+  else if(sc=="Surprise") items <- d_1b[,c("intimacy21","intimacy22","intimacy23")]
+  else items <- d_1b[,c("intimacy31","intimacy32","intimacy33")]
+  a <- psych::alpha(items); ase <- ifelse(is.null(a$total$ase),0,a$total$ase)
+  alpha_1b <- rbind(alpha_1b, data.frame(Scenario=sc,Items="3",Alpha=a$total$raw_alpha,
+    CI_lower=a$total$raw_alpha-1.96*ase,CI_upper=a$total$raw_alpha+1.96*ase,stringsAsFactors=FALSE))
+}
+
+m_intimacy_1b <- lmer(intimacy~attention*benefit*scenario+Order+(1|ID),data=dl_1b,REML=FALSE)
+m_exphelp_1b  <- lmer(exp_help~attention*benefit*scenario+Order+(1|ID),data=dl_1b,REML=FALSE)
+m_willhelp_1b <- lmer(will_help~attention*benefit*scenario+Order+(1|ID),data=dl_1b,REML=FALSE)
+
+# --- 1b.6 标准化回归系数（效应量） ---
+std_beta_1b <- rbind(
+  cbind(DV="intimacy", as.data.frame(standardize_parameters(m_intimacy_1b))),
+  cbind(DV="exp_help", as.data.frame(standardize_parameters(m_exphelp_1b))),
+  cbind(DV="will_help", as.data.frame(standardize_parameters(m_willhelp_1b))))
+std_beta_1b <- std_beta_1b[std_beta_1b$Parameter != "(Intercept)", ]
+std_beta_1b <- std_beta_1b[, c("DV","Parameter","Std_Coefficient","CI_low","CI_high")]
+names(std_beta_1b) <- c("DV","Parameter","Std_Beta","CI_low","CI_high")
+
+
+sink(file.path(OUT1b, "1b_results.md"))
+md_header("Study 1b - Results")
+md_header("Sample",3)
+cat(sprintf("- Valid subjects: %d\n- Long-format obs: %d\n- Note: No time variable\n\n", nrow(d_1b), nrow(dl_1b)))
+md_header("Cronbach Alpha (Intimacy)",3); md_table(alpha_1b, 3)
+md_header("Mixed Model: intimacy",3); cat("Formula: intimacy~attention*benefit*scenario+Order+(1|ID)\n\n"); md_table(make_anova_table(m_intimacy_1b))
+md_header("Mixed Model: exp_help",3); md_table(make_anova_table(m_exphelp_1b))
+md_header("Mixed Model: will_help",3); md_table(make_anova_table(m_willhelp_1b))
+
+md_header("Standardized Coefficients (Std. Beta)",3)
+md_table(std_beta_1b, 3)
+sink()
+cat(">>> Study 1b COMPLETE <<<\n")
+
+
+###############################################################################
+#                           实验 1b 中介分析                                   #
+###############################################################################
+# >>> 开始: 实验 1b 中介分析                                   #
+
+raw <- read_excel(DATA_FILE, sheet = "Study 1b", col_names = FALSE)
+d_1b_med <- raw[-(1:2), ]; names(d_1b_med) <- as.character(raw[2, ])
+d_1b_med <- d_1b_med %>% mutate(ID = as.factor(id), Order = as.factor(Order), age = as.numeric(age))
+d_1b_med[d_1b_med == "NA"] <- NA
+d_1b_med <- d_1b_med[complete.cases(d_1b_med[, req_1b]), ]
+d_1b_med <- d_1b_med %>% mutate(across(all_of(num_cols_1), as.numeric))
+na_out <- apply(d_1b_med[,num_cols_1], 1, function(r) any(is.na(r)))
+d_1b_med <- d_1b_med[!na_out, ]
+
+l1bm <- d_1b_med %>% dplyr::select(ID,Order,attention,benefit,age,sex,intimacy11,intimacy12,intimacy13,Exp.Help1,Will.Help1) %>%
+  rename(int1=intimacy11,int2=intimacy12,int3=intimacy13,exp_help=Exp.Help1,will_help=Will.Help1) %>% mutate(scenario="Advice")
+l2bm <- d_1b_med %>% dplyr::select(ID,Order,attention,benefit,age,sex,intimacy21,intimacy22,intimacy23,Exp.Help2,Will.Help2) %>%
+  rename(int1=intimacy21,int2=intimacy22,int3=intimacy23,exp_help=Exp.Help2,will_help=Will.Help2) %>% mutate(scenario="Surprise")
+l3bm <- d_1b_med %>% dplyr::select(ID,Order,attention,benefit,age,sex,intimacy31,intimacy32,intimacy33,Exp.Help3,Will.Help3) %>%
+  rename(int1=intimacy31,int2=intimacy32,int3=intimacy33,exp_help=Exp.Help3,will_help=Will.Help3) %>% mutate(scenario="Moral_Support")
+dl_1b_med <- bind_rows(l1bm,l2bm,l3bm)
+dl_1b_med <- dl_1b_med %>% mutate(intimacy=(int1+int2+int3)/3,scenario=factor(scenario,levels=c("Advice","Surprise","Moral_Support")))
+
+dl_1b_med$att_num<-ifelse(dl_1b_med$attention=="a1",1,0);dl_1b_med$b1<-ifelse(dl_1b_med$benefit=="b1",1,0)
+dl_1b_med$male<-ifelse(dl_1b_med$sex=="m",1,0);dl_1b_med$sc_surprise<-ifelse(dl_1b_med$scenario=="Surprise",1,0)
+dl_1b_med$sc_moral<-ifelse(dl_1b_med$scenario=="Moral_Support",1,0)
+dl_1b_med$ord2<-ifelse(dl_1b_med$Order=="b",1,0);dl_1b_med$ord3<-ifelse(dl_1b_med$Order=="c",1,0)
+
+cov_1b <- " + b1 + male + sc_surprise + sc_moral + ord2 + ord3"
+
+model1b_1 <- paste(paste0("intimacy~a1*att_num",cov_1b),paste0("exp_help~b1*intimacy+c1*att_num",cov_1b),"indirect1:=a1*b1","total1:=c1+(a1*b1)",sep="\n")
+model1b_2 <- paste(paste0("intimacy~a2*att_num",cov_1b),paste0("will_help~b2*intimacy+c2*att_num",cov_1b),"indirect2:=a2*b2","total2:=c2+(a2*b2)",sep="\n")
+model1b_3 <- paste(paste0("exp_help~a3*att_num",cov_1b),paste0("will_help~b3*exp_help+c3*att_num",cov_1b),"indirect3:=a3*b3","total3:=c3+(a3*b3)",sep="\n")
+model1b_4 <- paste(paste0("will_help~a4*att_num",cov_1b),paste0("exp_help~b4*will_help+c4*att_num",cov_1b),"indirect4:=a4*b4","total4:=c4+(a4*b4)",sep="\n")
+model1b_5 <- paste(paste0("intimacy~a5*att_num",cov_1b),paste0("will_help~d51*intimacy+a52*att_num",cov_1b),paste0("exp_help~d52*will_help+d53*intimacy+c5*att_num",cov_1b),"ind_att_int_will:=a5*d51","ind_att_int_exp:=a5*d53","ind_att_will_exp:=a52*d52","ind_serial:=a5*d51*d52","total_ind:=(a5*d51)+(a5*d53)+(a52*d52)+(a5*d51*d52)","total:=c5+total_ind",sep="\n")
+model1b_6 <- paste(paste0("intimacy~a6*att_num",cov_1b),paste0("exp_help~d61*intimacy+a62*att_num",cov_1b),paste0("will_help~d62*exp_help+d63*intimacy+c6*att_num",cov_1b),"ind_att_int_exp:=a6*d61","ind_att_int_will:=a6*d63","ind_att_exp_will:=a62*d62","ind_serial:=a6*d61*d62","total_ind:=(a6*d61)+(a6*d63)+(a62*d62)+(a6*d61*d62)","total:=c6+total_ind",sep="\n")
+
+fit1b <- sem(model1b_1,data=dl_1b_med,cluster="ID");fit2b <- sem(model1b_2,data=dl_1b_med,cluster="ID")
+fit3b <- sem(model1b_3,data=dl_1b_med,cluster="ID");fit4b <- sem(model1b_4,data=dl_1b_med,cluster="ID")
+fit5b <- sem(model1b_5,data=dl_1b_med,cluster="ID");fit6b <- sem(model1b_6,data=dl_1b_med,cluster="ID")
+
+med_all_1b <- rbind(
+  get_med_table(fit1b,"M1: att->int->exp"),get_med_table(fit2b,"M2: att->int->will"),
+  get_med_table(fit3b,"M3: att->exp->will"),get_med_table(fit4b,"M4: att->will->exp"),
+  get_med_table(fit5b,"M5: att->int->will->exp"),get_med_table(fit6b,"M6: att->int->exp->will"))
+
+sink(file.path(OUT1b,"1b_mediation.md"))
+md_header("Study 1b - Mediation Analysis")
+md_header("Indirect & Total Effects",3)
+cat(sprintf("N obs: %d\n\n", nrow(dl_1b_med)))
+md_table(med_all_1b,4)
+sink()
+cat(">>> Study 1b Mediation COMPLETE <<<\n")
+
+###############################################################################
+#                          实验 2a & 2b 分析                                   #
+###############################################################################
+# >>> 开始: 实验 2a & 2b 分析                                   #
+dir.create(file.path(OUT_DIR,"2a_2b"), showWarnings = FALSE, recursive = TRUE)
+OUT2ab <- file.path(OUT_DIR,"2a_2b")
+
+raw_2a <- read_excel(DATA_FILE, sheet="Study 2a", col_names=FALSE)
+raw_2b <- read_excel(DATA_FILE, sheet="Study 2b", col_names=FALSE)
+col_names_2 <- as.character(raw_2a[1,])
+df_2a <- as.data.frame(raw_2a[-1,], stringsAsFactors=FALSE); names(df_2a) <- col_names_2
+df_2b <- as.data.frame(raw_2b[-1,], stringsAsFactors=FALSE); names(df_2b) <- col_names_2
+
+to_num <- function(df){df %>% mutate(ID=as.integer(ID),age=as.integer(age),sex=as.factor(sex),attention=as.factor(attention),care=as.integer(care),care2=as.integer(care2),accept=as.integer(accept),understand=as.integer(understand),friend1=as.integer(friend1),friend2=as.integer(friend2))}
+df_2a<-to_num(df_2a); df_2b<-to_num(df_2b)
+
+reverse_7 <- function(x){8-x}
+process_2 <- function(df){df %>% mutate(care2_rev=reverse_7(care2),care_comp=(care+care2_rev)/2,friend_comp=(friend1+friend2)/2,intimacy=(care+care2_rev+accept+understand+friend1+friend2)/6)}
+df_2a<-process_2(df_2a); df_2b<-process_2(df_2b)
+
+# 保存清洗后数据
+write_xlsx(as.data.frame(df_2a), file.path(CLEAN_DIR,"2a_cleaned.xlsx"))
+write_xlsx(as.data.frame(df_2b), file.path(CLEAN_DIR,"2b_cleaned.xlsx"))
+
+dv_list_2<-c("care_comp","accept","understand","friend_comp","intimacy")
+dv_lab_2<-c("care","accept","understand","friend","intimacy")
+alpha_items_2<-c("care","care2_rev","accept","understand","friend1","friend2")
+alpha_2a<-psych::alpha(df_2a[,alpha_items_2],check.keys=TRUE)
+alpha_2b<-psych::alpha(df_2b[,alpha_items_2],check.keys=TRUE)
+
+bootstrap_t_test <- function(data,dv_name,R=5000){
+  g1<-data[[dv_name]][data$attention=="a1"];g0<-data[[dv_name]][data$attention=="a0"]
+  n1<-length(g1);n2<-length(g0);gm<-mean(data[[dv_name]],na.rm=TRUE)
+  ott<-t.test(g1,g0,var.equal=FALSE);ot<-as.numeric(ott$statistic);omd<-mean(g1)-mean(g0)
+  dr<-effectsize::cohens_d(g1,g0);od<-as.numeric(dr$Cohens_d);dcl<-as.numeric(dr$CI_low);dch<-as.numeric(dr$CI_high)
+  bmd<-function(data,indices){d<-data[indices,];mean(d[[dv_name]][d$attention=="a1"])-mean(d[[dv_name]][d$attention=="a0"])}
+  set.seed(2024);   bmr<-boot::boot(data,bmd,R=R);mci<-boot::boot.ci(bmr,type="perc");bse<-sd(bmr$t,na.rm=TRUE)
+  dc<-data;dc[[dv_name]][data$attention=="a1"]<-g1-mean(g1)+gm;dc[[dv_name]][data$attention=="a0"]<-g0-mean(g0)+gm
+  btn<-function(data,indices){d<-data[indices,];g1<-d[[dv_name]][d$attention=="a1"];g0<-d[[dv_name]][d$attention=="a0"];if(length(g1)<2||length(g0)<2)return(NA);tt<-t.test(g1,g0,var.equal=FALSE);as.numeric(tt$statistic)}
+  set.seed(2024);   btr<-boot::boot(dc,btn,R=R);btv<-btr$t[!is.na(btr$t)];pb<-mean(abs(btv)>=abs(ot))
+  data.frame(DV=dv_lab_2[which(dv_list_2==dv_name)],N_a1=n1,N_a0=n2,Mean_a1=mean(g1),Mean_a0=mean(g0),MeanDiff=omd,t=ot,df=as.numeric(ott$parameter),Welch_p=ott$p.value,Boot_p=pb,Cohens_d=od,d_CI_low=dcl,d_CI_high=dch,stringsAsFactors=FALSE)
+}
+
+boot_2a <- do.call(rbind, lapply(dv_list_2, function(dv) bootstrap_t_test(df_2a,dv,5000)))
+boot_2b <- do.call(rbind, lapply(dv_list_2, function(dv) bootstrap_t_test(df_2b,dv,5000)))
+
+sink(file.path(OUT2ab,"2a_2b_results.md"))
+md_header("Study 2a & 2b - Bootstrap t-test Results")
+md_header("Reliability",3)
+cat(sprintf("- Study 2a Cronbach alpha (6 items): %.4f\n",alpha_2a$total$raw_alpha))
+cat(sprintf("- Study 2b Cronbach alpha (6 items): %.4f\n\n",alpha_2b$total$raw_alpha))
+md_header("Study 2a (80% vs 0% attention)",3); cat(sprintf("N a1=%d, a0=%d\n\n",sum(df_2a$attention=="a1"),sum(df_2a$attention=="a0"))); md_table(boot_2a)
+md_header("Study 2b (active vs random attention)",3); cat(sprintf("N a1=%d, a0=%d\n\n",sum(df_2b$attention=="a1"),sum(df_2b$attention=="a0"))); md_table(boot_2b)
+sink()
+cat(">>> Study 2a & 2b COMPLETE <<<\n")
+
+
+###############################################################################
+#                            实验 2c 分析                                      #
+###############################################################################
+# >>> 开始: 实验 2c 分析                                      #
+dir.create(file.path(OUT_DIR,"2c"), showWarnings = FALSE, recursive = TRUE)
+OUT2c <- file.path(OUT_DIR,"2c")
+
+# --- 2c.1 读取数据 ---
+raw_2c <- read_excel(DATA_FILE, sheet="Study 2c")
+df_2c <- as.data.frame(raw_2c)
+df_2c$attention <- factor(df_2c$attention, levels=c("low","mid","high"), labels=c("Low(20%)","Mid(50%)","High(80%)"))
+df_2c$sex <- factor(df_2c$sex, levels=c("f","m"), labels=c("F","M"))
+
+# --- 2c.2 数据预处理 ---
+df_2c$care2_r <- 8 - df_2c$care2
+intimacy_items_2c <- df_2c[,c("care","care2_r","accept","understand")]
+alpha_int_2c <- psych::alpha(intimacy_items_2c)
+r12_2c <- cor(df_2c$friend1,df_2c$friend2)
+df_2c$intimacy <- rowMeans(intimacy_items_2c, na.rm=TRUE)
+df_2c$friendship <- rowMeans(df_2c[,c("friend1","friend2")], na.rm=TRUE)
+
+# 异常值检测（|z| > 2.58）
+outlier_vars <- c("intimacy","friendship","care","care2_r","accept","understand","friend1","friend2","Est.attention","Actual.attention")
+df_2c$outlier_flag <- FALSE
+for(v in outlier_vars){z<-scale(df_2c[[v]])[,1];df_2c$outlier_flag[abs(z)>2.58]<-TRUE}
+df_2c_clean <- df_2c[!df_2c$outlier_flag,]
+cat(sprintf("  Outliers: %d/%d\n", sum(df_2c$outlier_flag), nrow(df_2c)))
+
+write_xlsx(df_2c, file.path(CLEAN_DIR,"2c_cleaned.xlsx"))
+
+# --- 2c.3 描述性统计 ---
+desc_2c <- df_2c %>% group_by(attention) %>%
+  summarise(N=n(),Intimacy_M=mean(intimacy),Intimacy_SD=sd(intimacy),
+    Friendship_M=mean(friendship),Friendship_SD=sd(friendship),
+    Est_att_M=mean(Est.attention),Est_att_SD=sd(Est.attention),
+    Act_att_M=mean(Actual.attention),Act_att_SD=sd(Actual.attention),.groups="drop")
+write_xlsx(as.data.frame(desc_2c), file.path(OUT2c,"desc_stats.xlsx"))
+
+# --- 2c.4 Welch 方差分析 ---
+welch <- oneway.test(intimacy~attention, data=df_2c, var.equal=FALSE)
+f_val <- sqrt(welch$statistic * welch$parameter[1] / nrow(df_2c))
+welch_cl <- oneway.test(intimacy~attention, data=df_2c_clean, var.equal=FALSE)
+f_cl <- sqrt(welch_cl$statistic * welch_cl$parameter[1] / nrow(df_2c_clean))
+
+# --- 2c.5 贝叶斯方差分析 ---
+set.seed(2024); bf_full <- anovaBF(intimacy~attention, data=df_2c, iterations=10000)
+bf10_val <- as.numeric(extractBF(bf_full)["bf"])
+set.seed(2024); bf_cl <- anovaBF(intimacy~attention, data=df_2c_clean, iterations=10000)
+bf10_cl <- as.numeric(extractBF(bf_cl)["bf"])
+set.seed(2024); bf_rob <- anovaBF(intimacy~attention, data=df_2c, rscaleFixed="medium", rscaleRandom="medium", iterations=10000)
+bf10_rob <- as.numeric(extractBF(bf_rob)["bf"])
+
+# --- 2c.6 剂量-反应分析 ---
+# 使用真实概率值 (0.2/0.5/0.8)，而非因子编码 1/2/3
+df_2c$att_prob <- dplyr::case_when(
+  df_2c$attention == "Low(20%)"  ~ 0.2,
+  df_2c$attention == "Mid(50%)"  ~ 0.5,
+  df_2c$attention == "High(80%)" ~ 0.8)
+rob_fit <- rlm(intimacy ~ att_prob, data=df_2c)
+coef_b <- coef(rob_fit)["att_prob"]; se_b <- sqrt(diag(vcov(rob_fit)))["att_prob"]
+t_b <- coef_b/se_b; p_b <- 2*pt(abs(t_b), df=nrow(df_2c)-2, lower.tail=FALSE)
+r2 <- 1-sum(resid(rob_fit)^2)/sum((df_2c$intimacy-mean(df_2c$intimacy))^2)
+sp <- cor.test(df_2c$intimacy, df_2c$att_prob, method="spearman")
+
+# --- 2c.7 操控检验 ---
+set.seed(2024); bf_cor <- correlationBF(df_2c$Est.attention, df_2c$Actual.attention, iterations=10000)
+bf10_cor <- as.numeric(extractBF(bf_cor)["bf"]); rho_m <- cor(df_2c$Est.attention,df_2c$Actual.attention)
+rho_ci <- cor.test(df_2c$Est.attention,df_2c$Actual.attention)$conf.int[1:2]
+set.seed(2024); bf_tt <- ttestBF(df_2c$Est.attention,df_2c$Actual.attention,paired=TRUE,iterations=10000)
+bf10_tt <- as.numeric(extractBF(bf_tt)["bf"])
+d_m <- mean(df_2c$Est.attention-df_2c$Actual.attention)/sd(df_2c$Est.attention-df_2c$Actual.attention)
+d_ci <- t.test(df_2c$Est.attention,df_2c$Actual.attention,paired=TRUE)$conf.int
+set.seed(2024); bf_chk <- anovaBF(Est.attention~attention,data=df_2c,iterations=10000)
+bf10_chk <- as.numeric(extractBF(bf_chk)["bf"])
+
+# --- 2c.8 导出 Markdown 三线表 ---
+bf_label <- function(bf){if(bf<1/100)return("Extreme H0");if(bf<1/30)return("Very strong H0");if(bf<1/10)return("Strong H0");if(bf<1/3)return("Moderate H0");if(bf<1)return("Anecdotal H0");if(bf<3)return("Anecdotal H1");if(bf<10)return("Moderate H1");if(bf<30)return("Strong H1");if(bf<100)return("Very strong H1");return("Extreme H1")}
+
+sink(file.path(OUT2c,"2c_results.md"))
+md_header("Study 2c - Results")
+cat(sprintf("Total N=%d (Low=%d, Mid=%d, High=%d), Outliers excluded=%d\n\n",
+  nrow(df_2c),sum(df_2c$attention=="Low(20%)"),sum(df_2c$attention=="Mid(50%)"),
+  sum(df_2c$attention=="High(80%)"),sum(df_2c$outlier_flag)))
+
+md_header("Reliability",3)
+rel_2c <- data.frame(Scale=c("Intimacy (4 items)","Friendship (2 items)"),
+  Items=c("care,care2_r,accept,understand","friend1,friend2"),
+  Alpha=round(c(alpha_int_2c$total$raw_alpha,psych::alpha(df_2c[,c("friend1","friend2")])$total$raw_alpha),3),
+  stringsAsFactors=FALSE)
+md_table(rel_2c)
+
+md_header("Descriptive Statistics",3)
+md_table(as.data.frame(desc_2c))
+
+md_header("Main Analysis: Intimacy by Attention",3)
+main_2c <- data.frame(
+  Analysis=c("Welch ANOVA","Bayesian ANOVA"),
+  Statistic=c(sprintf("F(%.2f,%.2f)=%.2f",welch$parameter[1],welch$parameter[2],welch$statistic),
+    sprintf("BF10=%.2f",bf10_val)),
+  p=c(sprintf("%.4f",welch$p.value),NA),
+  EffectSize=c(sprintf("f=%.3f",f_val),bf_label(bf10_val)),
+  stringsAsFactors=FALSE)
+md_table(main_2c)
+
+md_header("Robustness Check",3)
+rob_2c <- data.frame(
+  Condition=c("Full","No-outlier","Robust BF"),
+  Welch_F=c(sprintf("%.2f",welch$statistic),sprintf("%.2f",welch_cl$statistic),NA),
+  Welch_p=c(sprintf("%.4f",welch$p.value),sprintf("%.4f",welch_cl$p.value),NA),
+  BF10=c(sprintf("%.2f",bf10_val),sprintf("%.2f",bf10_cl),sprintf("%.2f",bf10_rob)),
+  N=c(nrow(df_2c),nrow(df_2c_clean),nrow(df_2c)),
+  stringsAsFactors=FALSE)
+md_table(rob_2c)
+
+md_header("Dose-Response",3)
+dose_2c <- data.frame(
+  Method=c("Robust Regression","Spearman Correlation"),
+  Coefficient=c(sprintf("b=%.4f",coef_b),sprintf("rho=%.4f",sp$estimate)),
+  SE=c(sprintf("%.4f",se_b),NA),
+  p=c(sprintf("%.4f",p_b),sprintf("%.4f",sp$p.value)),
+  R2=c(sprintf("%.4f",r2),NA),
+  stringsAsFactors=FALSE)
+md_table(dose_2c)
+
+md_header("Manipulation Check",3)
+man_2c <- data.frame(
+  Analysis=c("Bayesian Correlation","Bayesian Paired t","Bayesian ANOVA"),
+  Variables=c("Est~Actual","Est vs Actual","Est~attention"),
+  BF10=sprintf("%.3f",c(bf10_cor,bf10_tt,bf10_chk)),
+  EffectSize=c(sprintf("rho=%.3f",rho_m),sprintf("d=%.3f",d_m),"See posterior"),
+  CI95=c(sprintf("[%.3f,%.3f]",rho_ci[1],rho_ci[2]),sprintf("[%.3f,%.3f]",d_ci[1],d_ci[2]),"-"),
+  stringsAsFactors=FALSE)
+md_table(man_2c)
+sink()
+
+# 同时保存 Excel 版本以便参考
+write_xlsx(main_2c, file.path(OUT2c,"apa_main.xlsx"))
+write_xlsx(rob_2c, file.path(OUT2c,"robustness.xlsx"))
+write_xlsx(dose_2c, file.path(OUT2c,"dose_response.xlsx"))
+write_xlsx(man_2c, file.path(OUT2c,"manipulation_check.xlsx"))
+write_xlsx(rel_2c, file.path(OUT2c,"reliability.xlsx"))
+write_xlsx(as.data.frame(desc_2c), file.path(OUT2c,"desc_comprehensive.xlsx"))
+
+cat(">>> Study 2c COMPLETE <<<\n")
+
+###############################################################################
+#                            最终汇总                                          #
+###############################################################################
+cat("\n", strrep("=", 70), "\n")
+cat("  ALL ANALYSES COMPLETE\n")
+cat(strrep("=", 70), "\n")
+cat(sprintf("  Output: %s\n", OUT_DIR))
+cat(sprintf("  Clean data: %s\n", CLEAN_DIR))
+cat("  Files generated:\n")
+for(f in list.files(OUT_DIR, recursive=TRUE)) cat(sprintf("    output/%s\n", f))
+for(f in list.files(CLEAN_DIR, recursive=TRUE)) cat(sprintf("    cleanedata/%s\n", f))
+cat(strrep("=", 70), "\n")
